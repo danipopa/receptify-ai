@@ -42,6 +42,12 @@ sleep 3
 
 start_service "agent"        "agent/main.py"
 
+# Warm up the LLM so the first real call is not slow
+echo "==> Warming up LLM (loading model into memory)..."
+curl -s http://127.0.0.1:9091/generate \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"hi\"}" > /dev/null && echo "    LLM warm-up done." || echo "    LLM warm-up skipped (service not yet ready)."
+
 echo ""
 echo "==> All services started."
 echo "    RAG  : http://${HOST_IP:-127.0.0.1}:9091/health"

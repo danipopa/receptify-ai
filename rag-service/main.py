@@ -109,12 +109,13 @@ class RagStore:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())
 
-    def _embed(self, text: str) -> np.ndarray | None:
+    def _embed(self, text: str, warn: bool = True) -> np.ndarray | None:
         try:
             r = self._ollama_post("/api/embeddings", {"model": EMBEDDING_MODEL, "prompt": text})
             return np.array(r["embedding"], dtype=np.float32)
         except Exception as e:
-            log.warning("embed error: %s", e)
+            if warn:
+                log.warning("embed error: %s", e)
             return None
 
     def _load_text(self) -> str:
@@ -147,7 +148,14 @@ class RagStore:
                 return 0
 
             log.info("Embedding %d chunks with %s", len(chunks), EMBEDDING_MODEL)
-            raw = [self._embed(c) or np.zeros(1, dtype=np.float32) for c in chunks]
+            embed_failed = False
+            raw = []
+            for c in chunks:
+                emb = self._embed(c)
+                if emb is None and not embed_failed:
+                    embed_failed = True
+                    log.warning("Embedding model unavailable — running without vector search (full-context fallback)")
+                raw.append(emb if emb is not None else np.zeros(1, dtype=np.float32))
 
             matrix = None
             if len({e.shape for e in raw}) == 1:
@@ -195,10 +203,9 @@ class RagStore:
             log.warning("Embeddings unavailable, returning all %d chunks", len(chunks))
             return "\n\n".join(chunks)
 
-        q = self._embed(text)
+        q = self._embed(text, warn=False)
         if q is None or q.shape != embeddings[0].shape:
-            # Embedding the query failed — return all chunks as fallback
-            log.warning("Query embedding failed, returning all %d chunks", len(chunks))
+            # Silent fallback — embedding model unavailable, full context already logged at build time
             return "\n\n".join(chunks)
 
         norms  = np.linalg.norm(embeddings, axis=1, keepdims=True)
