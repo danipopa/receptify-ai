@@ -60,9 +60,22 @@ fi
 # 4. Ollama models
 # ---------------------------------------------------------------------------
 if command -v ollama &>/dev/null; then
+    # Ensure ollama is running before pulling
+    if ! curl -sf http://127.0.0.1:11434/ &>/dev/null; then
+        echo "==> Ollama not running — starting it in the background..."
+        ollama serve &>/dev/null &
+        OLLAMA_PID=$!
+        echo "    PID $OLLAMA_PID — waiting for it to be ready..."
+        for i in $(seq 1 15); do
+            curl -sf http://127.0.0.1:11434/ &>/dev/null && break
+            sleep 1
+        done
+    fi
+
     echo "==> Pulling Ollama models (this may take a while on first run)..."
     ollama pull nomic-embed-text
     ollama pull llama3.2:1b
+    ollama pull llama3.2:3b
 else
     echo "==> WARNING: ollama not found in PATH. Install it and run:"
     echo "      ollama pull nomic-embed-text"

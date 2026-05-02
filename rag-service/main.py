@@ -41,7 +41,7 @@ import numpy as np
 
 FAQ_FILE        = os.getenv("FAQ_FILE",        "/opt/receptify-ai/context/ai-ivr-context.txt")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-LLM_MODEL       = os.getenv("LLM_MODEL",       "llama3.2:1b")
+LLM_MODEL       = os.getenv("LLM_MODEL",       "llama3.2:3b")
 OLLAMA_HOST     = os.getenv("OLLAMA_HOST",     "127.0.0.1:11434")
 RAG_CHUNK_WORDS = int(os.getenv("RAG_CHUNK_WORDS", "30"))
 RAG_TOP_K       = int(os.getenv("RAG_TOP_K",       "4"))
