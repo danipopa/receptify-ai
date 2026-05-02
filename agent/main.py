@@ -16,6 +16,7 @@ Environment variables (all optional, sensible defaults shown):
   RECORDING_DIR      /tmp/recordings
   RECORDING_ENABLED  false
   MUTE_BUFFER_SEC    0.5
+  WELCOME_MESSAGE    Thank you for calling. How can I help you today?
   SILENCE_MS         900
   MIN_SPEECH_SEC     0.8
   MAX_SPEECH_SEC     8.0
@@ -54,6 +55,11 @@ FS_BRIDGE_URL = os.getenv("FS_BRIDGE_URL", "http://fs-bridge:9094")
 RECORDING_DIR     = os.getenv("RECORDING_DIR",     "/tmp/recordings")
 RECORDING_ENABLED = os.getenv("RECORDING_ENABLED", "false").lower() == "true"
 MUTE_BUFFER_SEC   = float(os.getenv("MUTE_BUFFER_SEC", "0.5"))
+
+WELCOME_MESSAGE   = os.getenv(
+    "WELCOME_MESSAGE",
+    "Thank you for calling. How can I help you today?",
+)
 
 CAPTURE_RATE      = 48000
 SAMPLE_RATE       = CAPTURE_RATE
@@ -309,6 +315,17 @@ async def handler(websocket):
     pre_bytes     = int(SAMPLE_RATE * 2 * 0.4)
 
     async with aiohttp.ClientSession() as session:
+        # Play welcome message on call connect
+        if call_uuid and WELCOME_MESSAGE:
+            await asyncio.sleep(0.8)   # let FreeSWITCH finish call setup
+            log.info("Sending welcome message", extra={"call_uuid": call_uuid})
+            wav = await tts_synthesize(session, WELCOME_MESSAGE)
+            if wav:
+                tts_dur = await fs_broadcast(session, call_uuid, wav)
+                muted_until = time.monotonic() + tts_dur + MUTE_BUFFER_SEC
+            else:
+                log.warning("Welcome TTS failed", extra={"call_uuid": call_uuid})
+
         try:
             async for message in websocket:
                 if isinstance(message, str):
