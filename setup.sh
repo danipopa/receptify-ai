@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# setup.sh — install all Python dependencies and download Piper voice model.
+# setup.sh — install all Python dependencies, download Piper voice model,
+#             and pull required Ollama models.
 # Run once from the project root: bash setup.sh
 set -euo pipefail
 
@@ -56,7 +57,20 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Summary
+# 4. Ollama models
+# ---------------------------------------------------------------------------
+if command -v ollama &>/dev/null; then
+    echo "==> Pulling Ollama models (this may take a while on first run)..."
+    ollama pull nomic-embed-text
+    ollama pull llama3.2:1b
+else
+    echo "==> WARNING: ollama not found in PATH. Install it and run:"
+    echo "      ollama pull nomic-embed-text"
+    echo "      ollama pull llama3.2:1b"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Summary
 # ---------------------------------------------------------------------------
 echo ""
 echo "==> Setup complete."
