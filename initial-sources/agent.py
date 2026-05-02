@@ -27,7 +27,7 @@ MIN_SPEECH_SECONDS = 0.8
 MAX_SPEECH_SECONDS = 8
 RMS_THRESHOLD = 0.010
 
-RECORDING_DIR = "/tmp/receptify-ai-recordings"
+RECORDING_DIR = "/opt/receptify-ai/recordings"
 
 WS_HOST = "0.0.0.0"
 WS_PORT = 9090
@@ -35,11 +35,11 @@ WS_PORT = 9090
 OLLAMA = "/usr/local/bin/ollama"
 MODEL_NAME = "llama3.2:1b"
 
-PIPER = "/opt/ai-ivr-venv/bin/piper"
-PIPER_MODEL = "/opt/piper/en_US-lessac-medium.onnx"
+PIPER = "/opt/receptify-ai/venv/bin/piper"
+PIPER_MODEL = "/opt/receptify-ai/piper/en_US-lessac-medium.onnx"
 FS_CLI = "/usr/local/freeswitch/bin/fs_cli"
 
-FAQ_FILE = "/opt/ai-ivr-context.txt"
+FAQ_FILE = "/opt/receptify-ai/context/ai-ivr-context.txt"
 
 MAX_REPLY_CHARS = 180
 OLLAMA_TIMEOUT = 20

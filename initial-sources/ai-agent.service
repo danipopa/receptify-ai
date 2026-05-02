@@ -1,0 +1,14 @@
+[Unit]
+Description=Receptify AI Stream Agent
+After=network.target freeswitch.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/receptify-ai/agent
+ExecStart=/opt/receptify-ai/venv/bin/python /opt/receptify-ai/agent/agent.py
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
