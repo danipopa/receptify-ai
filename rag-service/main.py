@@ -191,11 +191,15 @@ class RagStore:
             return self._load_text()
 
         if embeddings is None:
-            return "\n\n".join(chunks[:top_k])
+            # No embeddings available — return all chunks so LLM has full context
+            log.warning("Embeddings unavailable, returning all %d chunks", len(chunks))
+            return "\n\n".join(chunks)
 
         q = self._embed(text)
         if q is None or q.shape != embeddings[0].shape:
-            return "\n\n".join(chunks[:top_k])
+            # Embedding the query failed — return all chunks as fallback
+            log.warning("Query embedding failed, returning all %d chunks", len(chunks))
+            return "\n\n".join(chunks)
 
         norms  = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms  = np.where(norms == 0, 1e-9, norms)
