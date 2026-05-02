@@ -6,7 +6,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 
-ENV FAQ_FILE=/opt/ai-ivr-context.txt \
+ENV FAQ_FILE=/opt/receptify-ai/context/ai-ivr-context.txt \
     EMBEDDING_MODEL=nomic-embed-text \
     LLM_MODEL=llama3.2:1b \
     OLLAMA_HOST=ollama:11434 \

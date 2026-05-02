@@ -37,6 +37,10 @@ done
 # ---------------------------------------------------------------------------
 mkdir -p "$BASE/piper" "$BASE/recordings" "$BASE/context"
 
+if [ ! -f "$BASE/context/ai-ivr-context.txt" ]; then
+    echo "==> context/ai-ivr-context.txt not found — using the sample from the repo."
+fi
+
 if [ ! -f "$PIPER_ONNX" ]; then
     echo "==> Downloading Piper ONNX model..."
     wget -q --show-progress -O "$PIPER_ONNX" "$PIPER_MODEL_BASE/en_US-lessac-medium.onnx"

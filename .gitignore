@@ -9,6 +9,8 @@ venv/
 
 # Local dev volumes (large binaries / private data)
 volumes/
+piper/
+recordings/
 
 # Editor / OS
 .vscode/

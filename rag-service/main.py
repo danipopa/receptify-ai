@@ -39,7 +39,7 @@ import numpy as np
 # Config
 # ---------------------------------------------------------------------------
 
-FAQ_FILE        = os.getenv("FAQ_FILE",        "/opt/ai-ivr-context.txt")
+FAQ_FILE        = os.getenv("FAQ_FILE",        "/opt/receptify-ai/context/ai-ivr-context.txt")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 LLM_MODEL       = os.getenv("LLM_MODEL",       "llama3.2:1b")
 OLLAMA_HOST     = os.getenv("OLLAMA_HOST",     "127.0.0.1:11434")
