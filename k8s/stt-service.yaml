@@ -1,0 +1,64 @@
+---
+# stt-service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stt-service
+  labels:
+    app: stt-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stt-service
+  template:
+    metadata:
+      labels:
+        app: stt-service
+    spec:
+      containers:
+        - name: stt-service
+          image: receptify-ai/stt-service:latest
+          ports:
+            - containerPort: 9092
+          env:
+            - name: WHISPER_MODEL
+              value: base
+            - name: WHISPER_DEVICE
+              value: cpu
+            - name: WHISPER_COMPUTE
+              value: int8
+            - name: WHISPER_LANGUAGE
+              value: en
+            - name: LOG_LEVEL
+              value: INFO
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9092
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9092
+            initialDelaySeconds: 40
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stt-service
+spec:
+  selector:
+    app: stt-service
+  ports:
+    - port: 9092
+      targetPort: 9092

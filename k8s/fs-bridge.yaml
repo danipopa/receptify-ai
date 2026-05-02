@@ -1,0 +1,95 @@
+---
+# fs-bridge DaemonSet — runs on every node where FreeSWITCH runs
+# Uses hostNetwork so it can reach FreeSWITCH ESL on 127.0.0.1:8021
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fs-bridge
+  labels:
+    app: fs-bridge
+spec:
+  selector:
+    matchLabels:
+      app: fs-bridge
+  template:
+    metadata:
+      labels:
+        app: fs-bridge
+    spec:
+      hostNetwork: true
+      tolerations:
+        - key: freeswitch
+          operator: Exists
+          effect: NoSchedule
+      nodeSelector:
+        freeswitch: "true"
+      containers:
+        - name: fs-bridge
+          image: receptify-ai/fs-bridge:latest
+          ports:
+            - containerPort: 9094
+              hostPort: 9094
+          env:
+            - name: FS_CLI
+              value: /usr/local/freeswitch/bin/fs_cli
+            - name: FS_HOST
+              value: "127.0.0.1"
+            - name: FS_PORT
+              value: "8021"
+            - name: FS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: freeswitch-secret
+                  key: esl-password
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "9094"
+            - name: WAV_DIR
+              value: /tmp/fs-bridge-wav
+            - name: LOG_LEVEL
+              value: INFO
+          volumeMounts:
+            - name: fscli
+              mountPath: /usr/local/freeswitch/bin/fs_cli
+              readOnly: true
+            - name: wav
+              mountPath: /tmp/fs-bridge-wav
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9094
+              host: 127.0.0.1
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9094
+              host: 127.0.0.1
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+      volumes:
+        - name: fscli
+          hostPath:
+            path: /usr/local/freeswitch/bin/fs_cli
+            type: File
+        - name: wav
+          emptyDir: {}
+---
+# Secret for FreeSWITCH ESL password
+# kubectl create secret generic freeswitch-secret --from-literal=esl-password=ClueCon
+apiVersion: v1
+kind: Secret
+metadata:
+  name: freeswitch-secret
+type: Opaque
+stringData:
+  esl-password: ClueCon    # change before deploying to production

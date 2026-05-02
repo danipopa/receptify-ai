@@ -1,0 +1,82 @@
+---
+# tts-service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tts-service
+  labels:
+    app: tts-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tts-service
+  template:
+    metadata:
+      labels:
+        app: tts-service
+    spec:
+      containers:
+        - name: tts-service
+          image: receptify-ai/tts-service:latest
+          ports:
+            - containerPort: 9093
+          env:
+            - name: PIPER_BIN
+              value: /piper/piper
+            - name: PIPER_MODEL
+              value: /piper/en_US-lessac-medium.onnx
+            - name: OUTPUT_SAMPLE_RATE
+              value: "8000"
+            - name: LOG_LEVEL
+              value: INFO
+          volumeMounts:
+            - name: piper-model
+              mountPath: /piper
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9093
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9093
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+      volumes:
+        - name: piper-model
+          persistentVolumeClaim:
+            claimName: piper-model-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tts-service
+spec:
+  selector:
+    app: tts-service
+  ports:
+    - port: 9093
+      targetPort: 9093
+---
+# PVC for Piper binary + model (ReadOnlyMany or ReadWriteOnce)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: piper-model-pvc
+spec:
+  accessModes:
+    - ReadOnlyMany
+  resources:
+    requests:
+      storage: 500Mi

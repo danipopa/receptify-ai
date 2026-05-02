@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+
+# Local dev volumes (large binaries / private data)
+volumes/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store

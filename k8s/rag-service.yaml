@@ -1,0 +1,72 @@
+---
+# rag-service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-service
+  labels:
+    app: rag-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-service
+  template:
+    metadata:
+      labels:
+        app: rag-service
+    spec:
+      containers:
+        - name: rag-service
+          image: receptify-ai/rag-service:latest
+          ports:
+            - containerPort: 9091
+          env:
+            - name: FAQ_FILE
+              value: /faq/ai-ivr-context.txt
+            - name: EMBEDDING_MODEL
+              value: nomic-embed-text
+            - name: LLM_MODEL
+              value: llama3.2:1b
+            - name: OLLAMA_HOST
+              value: ollama:11434
+            - name: LOG_LEVEL
+              value: INFO
+          volumeMounts:
+            - name: faq
+              mountPath: /faq
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9091
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9091
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: faq
+          configMap:
+            name: faq-context
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-service
+spec:
+  selector:
+    app: rag-service
+  ports:
+    - port: 9091
+      targetPort: 9091

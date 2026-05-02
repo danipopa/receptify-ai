@@ -1,0 +1,158 @@
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# Receptify AI — local development stack
+# ---------------------------------------------------------------------------
+# Prerequisites:
+#   - Ollama running on the host: ollama serve
+#   - ollama pull llama3.2:1b && ollama pull nomic-embed-text
+#   - Piper binary + model in ./volumes/piper/
+#   - FAQ file at ./volumes/faq/ai-ivr-context.txt
+#   - FreeSWITCH on host (fs-bridge uses host network)
+# ---------------------------------------------------------------------------
+
+networks:
+  ai-net:
+    driver: bridge
+
+volumes:
+  recordings:
+  fs-bridge-wav:
+
+services:
+
+  # --------------------------------------------------------------------------
+  # RAG service
+  # --------------------------------------------------------------------------
+  rag-service:
+    build: ./rag-service
+    restart: unless-stopped
+    networks: [ai-net]
+    ports:
+      - "9091:9091"
+    environment:
+      FAQ_FILE:        /faq/ai-ivr-context.txt
+      EMBEDDING_MODEL: nomic-embed-text
+      LLM_MODEL:       llama3.2:1b
+      OLLAMA_HOST:     host.docker.internal:11434
+      RAG_CHUNK_WORDS: "60"
+      RAG_TOP_K:       "3"
+      LOG_LEVEL:       INFO
+    volumes:
+      - ./volumes/faq:/faq:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:9091/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # STT service (Whisper)
+  # --------------------------------------------------------------------------
+  stt-service:
+    build: ./stt-service
+    restart: unless-stopped
+    networks: [ai-net]
+    ports:
+      - "9092:9092"
+    environment:
+      WHISPER_MODEL:    base
+      WHISPER_DEVICE:   cpu
+      WHISPER_COMPUTE:  int8
+      WHISPER_LANGUAGE: en
+      LOG_LEVEL:        INFO
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:9092/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # TTS service (Piper)
+  # --------------------------------------------------------------------------
+  tts-service:
+    build: ./tts-service
+    restart: unless-stopped
+    networks: [ai-net]
+    ports:
+      - "9093:9093"
+    environment:
+      PIPER_BIN:          /piper/piper
+      PIPER_MODEL:        /piper/en_US-lessac-medium.onnx
+      OUTPUT_SAMPLE_RATE: "8000"
+      LOG_LEVEL:          INFO
+    volumes:
+      - ./volumes/piper:/piper:ro
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:9093/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # FreeSWITCH bridge
+  # --------------------------------------------------------------------------
+  fs-bridge:
+    build: ./fs-bridge
+    restart: unless-stopped
+    # Needs access to FreeSWITCH ESL + WAV files must be on a path FS can read
+    network_mode: host
+    environment:
+      FS_CLI:      /usr/local/freeswitch/bin/fs_cli
+      FS_HOST:     127.0.0.1
+      FS_PORT:     "8021"
+      FS_PASSWORD: ClueCon
+      HOST:        0.0.0.0
+      PORT:        "9094"
+      WAV_DIR:     /tmp/fs-bridge-wav
+      LOG_LEVEL:   INFO
+    volumes:
+      - fs-bridge-wav:/tmp/fs-bridge-wav
+      - /usr/local/freeswitch/bin/fs_cli:/usr/local/freeswitch/bin/fs_cli:ro
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:9094/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # Agent (WebSocket ingest + orchestration)
+  # --------------------------------------------------------------------------
+  agent:
+    build: ./agent
+    restart: unless-stopped
+    network_mode: host      # FreeSWITCH connects to agent WS; easiest with host net for dev
+    depends_on:
+      rag-service:
+        condition: service_healthy
+      stt-service:
+        condition: service_healthy
+      tts-service:
+        condition: service_healthy
+      fs-bridge:
+        condition: service_healthy
+    environment:
+      WS_HOST:        0.0.0.0
+      WS_PORT:        "9090"
+      HTTP_PORT:      "9095"
+      STT_URL:        http://localhost:9092
+      RAG_URL:        http://localhost:9091
+      TTS_URL:        http://localhost:9093
+      FS_BRIDGE_URL:  http://localhost:9094
+      RECORDING_DIR:  /recordings
+      RECORDING_ENABLED: "false"
+      LOG_LEVEL:      INFO
+    volumes:
+      - recordings:/recordings
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:9095/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3

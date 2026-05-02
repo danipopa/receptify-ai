@@ -1,0 +1,104 @@
+---
+# agent Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  labels:
+    app: agent
+spec:
+  replicas: 1    # WebSocket sessions are stateful; scale with session affinity
+  selector:
+    matchLabels:
+      app: agent
+  template:
+    metadata:
+      labels:
+        app: agent
+    spec:
+      containers:
+        - name: agent
+          image: receptify-ai/agent:latest
+          ports:
+            - name: ws
+              containerPort: 9090
+            - name: http
+              containerPort: 9095
+          env:
+            - name: WS_HOST
+              value: "0.0.0.0"
+            - name: WS_PORT
+              value: "9090"
+            - name: HTTP_PORT
+              value: "9095"
+            - name: STT_URL
+              value: http://stt-service:9092
+            - name: RAG_URL
+              value: http://rag-service:9091
+            - name: TTS_URL
+              value: http://tts-service:9093
+            - name: FS_BRIDGE_URL
+              value: http://fs-bridge:9094
+            - name: RECORDING_ENABLED
+              value: "false"
+            - name: LOG_LEVEL
+              value: INFO
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9095
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9095
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+# ClusterIP for inter-service health checks
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent
+spec:
+  selector:
+    app: agent
+  ports:
+    - name: http
+      port: 9095
+      targetPort: 9095
+---
+# NodePort / LoadBalancer for FreeSWITCH → agent WebSocket
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-ws
+spec:
+  type: NodePort
+  selector:
+    app: agent
+  ports:
+    - name: ws
+      port: 9090
+      targetPort: 9090
+      nodePort: 30090   # FreeSWITCH points uuid_audio_stream here
+---
+# ConfigMap — FAQ content (edit and kubectl apply to hot-reload via /rebuild)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: faq-context
+data:
+  ai-ivr-context.txt: |
+    Our working hours are Monday to Friday from 9 AM to 5 PM.
+    We are closed on weekends and public holidays.
+    You can reach us by email at info@example.com.
+    Appointments can be booked online at example.com/book.

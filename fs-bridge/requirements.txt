@@ -1,0 +1,2 @@
+# fs-bridge has no Python dependencies beyond stdlib
+# (fs_cli binary must be present on the host or mounted)
