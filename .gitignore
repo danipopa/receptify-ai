@@ -7,6 +7,10 @@ __pycache__/
 venv/
 .env
 
+# Logs and runtime
+logs/
+*.pid
+
 # Local dev volumes (large binaries / private data)
 volumes/
 piper/
