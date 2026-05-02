@@ -242,11 +242,16 @@ async def process_audio(
     # Build prompt
     prompt_context = context or "No specific context available."
     prompt = (
-        "You are a short phone assistant. Use the context below.\n"
-        f"Context:\n{prompt_context}\n\n"
-        "Rules: answer in one sentence, max 20 words. "
-        "If not in context say: Sorry, I do not have that information.\n"
-        f"Caller said: {text}"
+        "You are a telephone receptionist. Answer the caller using ONLY the information in the context below.\n"
+        "Context:\n"
+        f"{prompt_context}\n\n"
+        "Instructions:\n"
+        "- Give a direct, short answer in one sentence (max 20 words).\n"
+        "- Use only facts from the context above.\n"
+        "- If the answer is clearly present in the context, state it.\n"
+        "- Only say 'Sorry, I do not have that information' if the topic is truly absent from the context.\n"
+        f"Caller: {text}\n"
+        "Answer:"
     )
 
     # Ask LLM via RAG service /generate endpoint (ollama passthrough)
