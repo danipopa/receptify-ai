@@ -90,20 +90,20 @@ def _synthesize(text: str, out_rate: int) -> bytes:
         out_wav = os.path.join(tmp, "out.wav")
 
         try:
-            subprocess.run(
+            result = subprocess.run(
                 [PIPER_BIN, "--model", PIPER_MODEL, "--output_file", raw_wav],
                 input=text,
                 text=True,
                 timeout=PIPER_TIMEOUT,
                 check=True,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
             )
         except subprocess.TimeoutExpired:
             subprocess.run(["pkill", "-9", "-f", "piper"], check=False)
             raise RuntimeError("Piper timeout")
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Piper failed: {e}")
+            raise RuntimeError(f"Piper failed (stderr): {e.stderr.strip()}")
 
         if not os.path.exists(raw_wav) or os.path.getsize(raw_wav) == 0:
             raise RuntimeError("Piper produced no output")
