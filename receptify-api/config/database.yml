@@ -16,9 +16,9 @@ default: &default
   adapter: postgresql
   encoding: unicode
   max_connections: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
-  host: <%= ENV.fetch("DB_HOST") { "localhost" } %>
+  host: <%= ENV.fetch("DB_HOST") { "" } %>
   port: <%= ENV.fetch("DB_PORT") { 5432 } %>
-  username: <%= ENV.fetch("DB_USERNAME") { "receptify" } %>
+  username: <%= ENV.fetch("DB_USERNAME") { "" } %>
   password: <%= ENV.fetch("DB_PASSWORD") { "" } %>
 
 development:

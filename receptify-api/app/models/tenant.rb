@@ -10,14 +10,20 @@ class Tenant < ApplicationRecord
 
   PLANS   = %w[free starter pro enterprise].freeze
   STATUSES = %w[active inactive suspended].freeze
+  SUBSCRIPTION_STATUSES = %w[none pending active cancelled suspended expired].freeze
 
   validates :name,      presence: true
   validates :email,     presence: true, uniqueness: true,
                         format: { with: URI::MailTo::EMAIL_REGEXP }
   validates :subdomain, presence: true, uniqueness: true,
                         format: { with: /\A[a-z0-9\-]+\z/, message: "only lowercase letters, numbers, and hyphens" }
-  validates :plan,   inclusion: { in: PLANS }
-  validates :status, inclusion: { in: STATUSES }
+  validates :plan,                inclusion: { in: PLANS }
+  validates :status,              inclusion: { in: STATUSES }
+  validates :subscription_status, inclusion: { in: SUBSCRIPTION_STATUSES }
+
+  def paid?
+    %w[starter pro enterprise].include?(plan)
+  end
 
   private
 

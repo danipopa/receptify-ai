@@ -14,6 +14,12 @@ Rails.application.routes.draw do
 
       # Call logs (read-only from dashboard)
       resources :call_logs, only: %i[index show]
+
+      # Billing / PayPal subscriptions
+      get    "billing",         to: "billing#show"
+      post   "billing/confirm", to: "billing#confirm"
+      delete "billing",         to: "billing#cancel"
+      post   "billing/webhook", to: "billing#webhook"
     end
   end
 

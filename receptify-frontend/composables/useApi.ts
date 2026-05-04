@@ -20,12 +20,18 @@ export function useApi() {
     })
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.error || error.errors?.join(", ") || `HTTP ${response.status}`)
+      const ct = response.headers.get("content-type") ?? ""
+      if (ct.includes("application/json")) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.error || error.errors?.join(", ") || `HTTP ${response.status}`)
+      }
+      throw new Error(`Server error (HTTP ${response.status})`)
     }
 
     if (response.status === 204) return undefined as T
-    return response.json()
+    return response.json().catch(() => {
+      throw new Error(`Server returned an invalid response (HTTP ${response.status})`)
+    })
   }
 
   return {

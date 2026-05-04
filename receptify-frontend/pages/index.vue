@@ -1,7 +1,22 @@
 <template>
-  <div />
+  <div class="landing-page">
+    <LandingNav />
+    <LandingHero />
+    <LandingStats />
+    <LandingHowItWorks />
+    <LandingFeatures />
+    <LandingInvestors />
+    <LandingPricing />
+    <LandingTeam />
+    <LandingCta />
+    <LandingFooter />
+  </div>
 </template>
 
 <script setup lang="ts">
-await navigateTo("/dashboard")
+definePageMeta({ layout: false })
 </script>
+
+<style>
+@import '~/assets/css/landing.css';
+</style>

@@ -1,22 +1,25 @@
 <template>
   <NuxtLayout name="auth">
-    <h2 class="form-heading">Sign in to Receptify</h2>
+    <div class="auth-header">
+      <h2 class="auth-title">Welcome back</h2>
+      <p class="auth-subtitle">Sign in to your Receptify account</p>
+    </div>
     <form @submit.prevent="submit">
       <div class="form-group">
-        <label class="form-label">Email</label>
-        <input v-model="form.email" type="email" class="form-control" required autocomplete="email" />
+        <label class="form-label">Email address</label>
+        <input v-model="form.email" type="email" class="form-control" required autocomplete="email" placeholder="you@company.com" />
       </div>
       <div class="form-group">
         <label class="form-label">Password</label>
-        <input v-model="form.password" type="password" class="form-control" required autocomplete="current-password" />
+        <input v-model="form.password" type="password" class="form-control" required autocomplete="current-password" placeholder="••••••••" />
       </div>
-      <p v-if="error" class="error-msg">{{ error }}</p>
-      <button type="submit" class="btn btn-primary" style="width:100%" :disabled="loading">
+      <div v-if="error" class="alert alert-error">{{ error }}</div>
+      <button type="submit" class="btn btn-primary btn-block" :disabled="loading">
         {{ loading ? "Signing in…" : "Sign in" }}
       </button>
     </form>
-    <p class="form-footer">
-      Don't have an account? <NuxtLink to="/register">Create one</NuxtLink>
+    <p class="auth-footer">
+      Don't have an account? <NuxtLink to="/register">Create one free</NuxtLink>
     </p>
   </NuxtLayout>
 </template>
@@ -46,7 +49,8 @@ async function submit() {
 </script>
 
 <style scoped>
-.form-heading { font-size: 20px; font-weight: 600; margin-bottom: 24px; text-align: center; }
-.error-msg { color: var(--color-danger); font-size: 13px; margin-bottom: 12px; }
-.form-footer { margin-top: 20px; text-align: center; font-size: 13px; color: var(--color-text-muted); }
+.auth-header { margin-bottom: 28px; }
+.auth-title  { font-size: 22px; font-weight: 700; color: var(--color-text); letter-spacing: -0.02em; margin-bottom: 4px; }
+.auth-subtitle { font-size: 14px; color: var(--color-text-muted); }
+.auth-footer { margin-top: 20px; text-align: center; font-size: 13px; color: var(--color-text-muted); }
 </style>

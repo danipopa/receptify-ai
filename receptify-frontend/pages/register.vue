@@ -1,10 +1,13 @@
 <template>
   <NuxtLayout name="auth">
-    <h2 class="form-heading">Create your account</h2>
+    <div class="auth-header">
+      <h2 class="auth-title">Create your account</h2>
+      <p class="auth-subtitle">Start with a free plan — no credit card required</p>
+    </div>
     <form @submit.prevent="submit">
       <div class="form-group">
         <label class="form-label">Business Name</label>
-        <input v-model="form.name" type="text" class="form-control" required />
+        <input v-model="form.name" type="text" class="form-control" required placeholder="Acme Corp" />
       </div>
       <div class="form-group">
         <label class="form-label">Subdomain</label>
@@ -15,19 +18,19 @@
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">Email</label>
-        <input v-model="form.email" type="email" class="form-control" required />
+        <label class="form-label">Email Address</label>
+        <input v-model="form.email" type="email" class="form-control" required placeholder="you@company.com" />
       </div>
       <div class="form-group">
         <label class="form-label">Password</label>
-        <input v-model="form.password" type="password" class="form-control" required minlength="8" />
+        <input v-model="form.password" type="password" class="form-control" required minlength="8" placeholder="Minimum 8 characters" />
       </div>
-      <p v-if="error" class="error-msg">{{ error }}</p>
-      <button type="submit" class="btn btn-primary" style="width:100%" :disabled="loading">
+      <div v-if="error" class="alert alert-error">{{ error }}</div>
+      <button type="submit" class="btn btn-primary btn-block" :disabled="loading">
         {{ loading ? "Creating account…" : "Create account" }}
       </button>
     </form>
-    <p class="form-footer">
+    <p class="auth-footer">
       Already have an account? <NuxtLink to="/login">Sign in</NuxtLink>
     </p>
   </NuxtLayout>
@@ -58,10 +61,11 @@ async function submit() {
 </script>
 
 <style scoped>
-.form-heading { font-size: 20px; font-weight: 600; margin-bottom: 24px; text-align: center; }
+.auth-header { margin-bottom: 28px; }
+.auth-title  { font-size: 22px; font-weight: 700; color: var(--color-text); letter-spacing: -0.02em; margin-bottom: 4px; }
+.auth-subtitle { font-size: 14px; color: var(--color-text-muted); }
 .subdomain-input { display: flex; align-items: center; gap: 8px; }
 .subdomain-input .form-control { flex: 1; }
-.subdomain-suffix { font-size: 13px; color: var(--color-text-muted); white-space: nowrap; }
-.error-msg { color: var(--color-danger); font-size: 13px; margin-bottom: 12px; }
-.form-footer { margin-top: 20px; text-align: center; font-size: 13px; color: var(--color-text-muted); }
+.subdomain-suffix { font-size: 13px; color: var(--color-text-muted); white-space: nowrap; font-weight: 500; }
+.auth-footer { margin-top: 20px; text-align: center; font-size: 13px; color: var(--color-text-muted); }
 </style>
