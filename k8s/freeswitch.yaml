@@ -63,7 +63,7 @@ spec:
             - |
               if [ -z "$(ls -A /data 2>/dev/null)" ]; then
                 echo "Copying default FreeSWITCH config to hostPath..."
-                cp -r /etc/freeswitch/. /data/
+                cp -r /usr/local/freeswitch/conf/. /data/
               else
                 echo "Config already present, skipping copy."
               fi
