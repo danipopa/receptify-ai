@@ -9,6 +9,7 @@ venv/
 
 # Logs and runtime
 logs/
+*.log
 *.pid
 
 # Local dev volumes (large binaries / private data)
@@ -22,3 +23,18 @@ recordings/
 *.swp
 *~
 .DS_Store
+
+# Rails
+receptify-api/.env
+receptify-api/log/
+receptify-api/tmp/
+receptify-api/storage/
+receptify-api/.bundle/
+
+# Nuxt / Node
+receptify-frontend/.env
+receptify-frontend/.nuxt/
+receptify-frontend/.output/
+receptify-frontend/node_modules/
+package-lock.json
+web/
