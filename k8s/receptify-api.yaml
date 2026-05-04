@@ -52,6 +52,7 @@ spec:
       containers:
         - name: receptify-api
           image: ghcr.io/danipopa/receptify-api:latest
+          command: ["./bin/rails", "server", "-b", "0.0.0.0", "-p", "3000"]
           ports:
             - containerPort: 3000
           env:
@@ -59,8 +60,6 @@ spec:
               value: production
             - name: RAILS_LOG_TO_STDOUT
               value: "true"
-            - name: HTTP_PORT
-              value: "3000"
             - name: DB_HOST
               value: postgres
             - name: DB_PORT
