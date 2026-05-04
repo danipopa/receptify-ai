@@ -36,5 +36,4 @@ receptify-frontend/.env
 receptify-frontend/.nuxt/
 receptify-frontend/.output/
 receptify-frontend/node_modules/
-package-lock.json
 web/

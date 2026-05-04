@@ -4,8 +4,8 @@ WORKDIR /app
 
 # Install dependencies
 FROM base AS deps
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json package-lock.json* ./
+RUN npm install --frozen-lockfile 2>/dev/null || npm install
 
 # Build stage
 FROM base AS build
@@ -27,12 +27,10 @@ FROM node:22-slim AS final
 
 WORKDIR /app
 
-RUN groupadd --system --gid 1000 nuxt && \
-    useradd nuxt --uid 1000 --gid 1000 --create-home --shell /bin/bash
+# node:22-slim already has a node user (uid 1000) — reuse it
+USER node
 
-COPY --chown=nuxt:nuxt --from=build /app/.output ./output
-
-USER 1000:1000
+COPY --chown=node:node --from=build /app/.output ./output
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
