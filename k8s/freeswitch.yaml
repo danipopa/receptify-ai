@@ -1,0 +1,194 @@
+---
+# PersistentVolume for FreeSWITCH config (operator-managed on the node)
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: freeswitch-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /home/storage/ns/receptify/freeswitch
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: freeswitch-pvc
+  namespace: receptify
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  volumeName: freeswitch-pv
+---
+# FreeSWITCH StatefulSet
+# Runs with hostNetwork:true so SIP/RTP ports bind directly to the node.
+# Pin the node with: kubectl label node <node-name> freeswitch=true
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: freeswitch
+  namespace: receptify
+  labels:
+    app: freeswitch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: freeswitch
+  serviceName: freeswitch-headless
+  template:
+    metadata:
+      labels:
+        app: freeswitch
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        freeswitch: "true"
+      imagePullSecrets:
+        - name: ghcr-secret
+      # Init container: copies default config to hostPath on first run
+      initContainers:
+        - name: init-config
+          image: ghcr.io/danipopa/freeswitch:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              if [ -z "$(ls -A /data 2>/dev/null)" ]; then
+                echo "Copying default FreeSWITCH config to hostPath..."
+                cp -r /etc/freeswitch/. /data/
+              else
+                echo "Config already present, skipping copy."
+              fi
+          volumeMounts:
+            - name: fs-config
+              mountPath: /data
+      containers:
+        - name: freeswitch
+          image: ghcr.io/danipopa/freeswitch:latest
+          args: ["-nonat", "-nf"]
+          env:
+            - name: FS_EXT_SIP_IP
+              valueFrom:
+                secretKeyRef:
+                  name: freeswitch-secret
+                  key: FS_EXT_SIP_IP
+            - name: FS_EXT_RTP_IP
+              valueFrom:
+                secretKeyRef:
+                  name: freeswitch-secret
+                  key: FS_EXT_SIP_IP   # same IP for both unless overridden
+            - name: FS_ESL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: freeswitch-secret
+                  key: FS_ESL_PASSWORD
+          ports:
+            - name: sip-udp
+              containerPort: 5060
+              protocol: UDP
+            - name: sip-tcp
+              containerPort: 5060
+              protocol: TCP
+            - name: sip-ext-udp
+              containerPort: 5080
+              protocol: UDP
+            - name: sip-ext-tcp
+              containerPort: 5080
+              protocol: TCP
+            - name: esl
+              containerPort: 8021
+              protocol: TCP
+          volumeMounts:
+            - name: fs-config
+              mountPath: /etc/freeswitch
+          livenessProbe:
+            tcpSocket:
+              port: 8021
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: 8021
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+      volumes:
+        - name: fs-config
+          persistentVolumeClaim:
+            claimName: freeswitch-pvc
+---
+# Headless service for StatefulSet DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: freeswitch-headless
+  namespace: receptify
+spec:
+  clusterIP: None
+  selector:
+    app: freeswitch
+  ports:
+    - name: esl
+      port: 8021
+      targetPort: 8021
+---
+# ClusterIP service so other pods (agent) reach ESL at freeswitch:8021
+apiVersion: v1
+kind: Service
+metadata:
+  name: freeswitch
+  namespace: receptify
+spec:
+  selector:
+    app: freeswitch
+  ports:
+    - name: esl
+      port: 8021
+      targetPort: 8021
+---
+# LoadBalancer service — MetalLB assigns 88.198.85.73 to the FS node
+# This makes the dedicated SIP IP routable. SIP/RTP traffic flows via
+# hostNetwork directly; this service just anchors the IP to the right node.
+apiVersion: v1
+kind: Service
+metadata:
+  name: freeswitch-sip
+  namespace: receptify
+  annotations:
+    metallb.universe.tf/allow-shared-ip: "freeswitch"
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 88.198.85.73
+  selector:
+    app: freeswitch
+  ports:
+    - name: sip-udp
+      port: 5060
+      targetPort: 5060
+      protocol: UDP
+    - name: sip-tcp
+      port: 5060
+      targetPort: 5060
+      protocol: TCP
+    - name: sip-ext-udp
+      port: 5080
+      targetPort: 5080
+      protocol: UDP
+    - name: sip-ext-tcp
+      port: 5080
+      targetPort: 5080
+      protocol: TCP
