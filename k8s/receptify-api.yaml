@@ -52,7 +52,7 @@ spec:
       containers:
         - name: receptify-api
           image: ghcr.io/danipopa/receptify-api:latest
-          command: ["./bin/rails", "server", "-b", "0.0.0.0", "-p", "3000"]
+          args: ["./bin/rails", "server", "-b", "0.0.0.0", "-p", "3000"]
           ports:
             - containerPort: 3000
           env:
