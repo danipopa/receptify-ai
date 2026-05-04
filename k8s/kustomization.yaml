@@ -5,6 +5,7 @@ namespace: receptify
 
 resources:
   - namespace.yaml
+  - cert-issuer.yaml
   - secrets.yaml
   - postgres.yaml
   - receptify-api.yaml
