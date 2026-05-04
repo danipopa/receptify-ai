@@ -16,6 +16,8 @@ spec:
       labels:
         app: receptify-api
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       initContainers:
         - name: db-migrate
           image: ghcr.io/danipopa/receptify-api:latest
@@ -58,8 +60,6 @@ spec:
             - name: RAILS_LOG_TO_STDOUT
               value: "true"
             - name: HTTP_PORT
-              value: "3000"
-            - name: PORT
               value: "3000"
             - name: DB_HOST
               value: postgres
