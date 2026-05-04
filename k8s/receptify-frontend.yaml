@@ -16,6 +16,8 @@ spec:
       labels:
         app: receptify-frontend
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       containers:
         - name: receptify-frontend
           image: ghcr.io/danipopa/receptify-frontend:latest

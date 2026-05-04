@@ -17,6 +17,8 @@ spec:
       labels:
         app: fs-bridge
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       hostNetwork: true
       tolerations:
         - key: freeswitch

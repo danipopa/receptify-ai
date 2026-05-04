@@ -17,6 +17,8 @@ spec:
       labels:
         app: rag-service
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       containers:
         - name: rag-service
           image: ghcr.io/danipopa/rag-service:latest

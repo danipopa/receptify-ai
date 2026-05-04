@@ -17,6 +17,8 @@ spec:
       labels:
         app: tts-service
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       containers:
         - name: tts-service
           image: ghcr.io/danipopa/tts-service:latest

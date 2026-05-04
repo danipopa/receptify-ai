@@ -17,6 +17,8 @@ spec:
       labels:
         app: agent
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       containers:
         - name: agent
           image: ghcr.io/danipopa/agent:latest

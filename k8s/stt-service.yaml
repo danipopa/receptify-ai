@@ -17,6 +17,8 @@ spec:
       labels:
         app: stt-service
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       containers:
         - name: stt-service
           image: ghcr.io/danipopa/stt-service:latest
