@@ -4,6 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: agent
+  namespace: receptify
   labels:
     app: agent
 spec:
@@ -18,7 +19,7 @@ spec:
     spec:
       containers:
         - name: agent
-          image: receptify-ai/agent:latest
+          image: ghcr.io/danipopa/agent:latest
           ports:
             - name: ws
               containerPort: 9090
@@ -68,6 +69,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: agent
+  namespace: receptify
 spec:
   selector:
     app: agent
@@ -81,6 +83,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: agent-ws
+  namespace: receptify
 spec:
   type: NodePort
   selector:
@@ -96,6 +99,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: faq-context
+  namespace: receptify
 data:
   ai-ivr-context.txt: |
     Our working hours are Monday to Friday from 9 AM to 5 PM.

@@ -1,0 +1,134 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: receptify-api
+  namespace: receptify
+  labels:
+    app: receptify-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: receptify-api
+  template:
+    metadata:
+      labels:
+        app: receptify-api
+    spec:
+      initContainers:
+        - name: db-migrate
+          image: ghcr.io/danipopa/receptify-api:latest
+          command: ["./bin/rails", "db:create", "db:migrate"]
+          env:
+            - name: RAILS_ENV
+              value: production
+            - name: DB_HOST
+              value: postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: DB_PASSWORD
+            - name: RAILS_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: RAILS_MASTER_KEY
+            - name: SECRET_KEY_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: JWT_SECRET
+      containers:
+        - name: receptify-api
+          image: ghcr.io/danipopa/receptify-api:latest
+          ports:
+            - containerPort: 80
+          env:
+            - name: RAILS_ENV
+              value: production
+            - name: RAILS_LOG_TO_STDOUT
+              value: "true"
+            - name: DB_HOST
+              value: postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: DB_PASSWORD
+            - name: RAILS_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: RAILS_MASTER_KEY
+            - name: SECRET_KEY_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: JWT_SECRET
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: JWT_SECRET
+            - name: PAYPAL_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: PAYPAL_CLIENT_ID
+            - name: PAYPAL_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: PAYPAL_CLIENT_SECRET
+            - name: PAYPAL_BASE_URL
+              value: https://api-m.paypal.com
+            - name: ALLOWED_ORIGINS
+              value: "https://app.receptify.us"
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: 80
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: receptify-api
+  namespace: receptify
+spec:
+  selector:
+    app: receptify-api
+  ports:
+    - port: 80
+      targetPort: 80

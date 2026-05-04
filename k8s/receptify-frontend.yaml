@@ -1,0 +1,104 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: receptify-frontend
+  namespace: receptify
+  labels:
+    app: receptify-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: receptify-frontend
+  template:
+    metadata:
+      labels:
+        app: receptify-frontend
+    spec:
+      containers:
+        - name: receptify-frontend
+          image: ghcr.io/danipopa/receptify-frontend:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: NUXT_PUBLIC_API_BASE
+              value: https://api.receptify.us/api/v1
+            - name: NUXT_PUBLIC_PAYPAL_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: PAYPAL_CLIENT_ID
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: receptify-frontend
+  namespace: receptify
+spec:
+  selector:
+    app: receptify-frontend
+  ports:
+    - port: 3000
+      targetPort: 3000
+
+---
+# Ingress — requires nginx ingress controller + cert-manager for TLS
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: receptify-ingress
+  namespace: receptify
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - app.receptify.us
+        - api.receptify.us
+      secretName: receptify-tls
+  rules:
+    - host: app.receptify.us
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: receptify-frontend
+                port:
+                  number: 3000
+    - host: api.receptify.us
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: receptify-api
+                port:
+                  number: 80

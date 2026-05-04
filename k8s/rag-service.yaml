@@ -4,6 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: rag-service
+  namespace: receptify
   labels:
     app: rag-service
 spec:
@@ -18,7 +19,7 @@ spec:
     spec:
       containers:
         - name: rag-service
-          image: receptify-ai/rag-service:latest
+          image: ghcr.io/danipopa/rag-service:latest
           ports:
             - containerPort: 9091
           env:
@@ -64,6 +65,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: rag-service
+  namespace: receptify
 spec:
   selector:
     app: rag-service

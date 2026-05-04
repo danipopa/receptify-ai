@@ -4,6 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: tts-service
+  namespace: receptify
   labels:
     app: tts-service
 spec:
@@ -18,7 +19,7 @@ spec:
     spec:
       containers:
         - name: tts-service
-          image: receptify-ai/tts-service:latest
+          image: ghcr.io/danipopa/tts-service:latest
           ports:
             - containerPort: 9093
           env:
@@ -62,6 +63,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: tts-service
+  namespace: receptify
 spec:
   selector:
     app: tts-service
@@ -74,6 +76,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: piper-model-pvc
+  namespace: receptify
 spec:
   accessModes:
     - ReadOnlyMany
