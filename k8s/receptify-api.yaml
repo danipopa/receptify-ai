@@ -102,7 +102,7 @@ spec:
             - name: PAYPAL_BASE_URL
               value: https://api-m.paypal.com
             - name: ALLOWED_ORIGINS
-              value: "https://app.receptify.us"
+              value: "https://app.receptify.us,https://www.receptify.us,https://receptify.us"
           readinessProbe:
             httpGet:
               path: /up
