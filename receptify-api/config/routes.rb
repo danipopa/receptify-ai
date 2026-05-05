@@ -25,4 +25,7 @@ Rails.application.routes.draw do
 
   # Health check
   get "up", to: proc { [200, {}, ["ok"]] }
+
+  # Root — return API info instead of 404
+  root to: proc { [200, { "Content-Type" => "application/json" }, ['{"status":"ok","service":"receptify-api","version":"v1"}']] }
 end
