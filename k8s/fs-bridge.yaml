@@ -29,6 +29,7 @@ spec:
       containers:
         - name: fs-bridge
           image: ghcr.io/danipopa/fs-bridge:latest
+          command: ["python3", "main.py"]
           ports:
             - containerPort: 9094
               hostPort: 9094
