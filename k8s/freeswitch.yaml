@@ -101,12 +101,12 @@ spec:
               mountPath: /usr/local/freeswitch/conf
           livenessProbe:
             tcpSocket:
-              port: 8021
+              port: 5060
             initialDelaySeconds: 30
             periodSeconds: 20
           readinessProbe:
             tcpSocket:
-              port: 8021
+              port: 5060
             initialDelaySeconds: 15
             periodSeconds: 10
           resources:
