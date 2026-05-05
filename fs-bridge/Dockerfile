@@ -17,4 +17,5 @@ ENV FS_CLI=/usr/local/freeswitch/bin/fs_cli \
 
 EXPOSE 9094
 
+ENTRYPOINT []
 CMD ["python3", "main.py"]
