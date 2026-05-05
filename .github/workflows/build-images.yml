@@ -70,3 +70,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          build-args: |
+            SIGNALWIRE_TOKEN=${{ secrets.SIGNALWIRE_TOKEN }}
