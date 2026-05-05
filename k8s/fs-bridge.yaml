@@ -43,7 +43,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: freeswitch-secret
-                  key: esl-password
+                  key: FS_ESL_PASSWORD
             - name: HOST
               value: "0.0.0.0"
             - name: PORT
@@ -53,9 +53,6 @@ spec:
             - name: LOG_LEVEL
               value: INFO
           volumeMounts:
-            - name: fscli
-              mountPath: /usr/local/freeswitch/bin/fs_cli
-              readOnly: true
             - name: wav
               mountPath: /tmp/fs-bridge-wav
           readinessProbe:
@@ -80,10 +77,6 @@ spec:
               cpu: "200m"
               memory: "128Mi"
       volumes:
-        - name: fscli
-          hostPath:
-            path: /usr/local/freeswitch/bin/fs_cli
-            type: File
         - name: wav
           emptyDir: {}
 ---

@@ -1,4 +1,30 @@
 ---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rag-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /home/storage/ns/receptify/rag
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rag-pvc
+  namespace: receptify
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: rag-pv
+---
 # rag-service Deployment
 apiVersion: apps/v1
 kind: Deployment
@@ -36,9 +62,8 @@ spec:
             - name: LOG_LEVEL
               value: INFO
           volumeMounts:
-            - name: faq
+            - name: rag-data
               mountPath: /faq
-              readOnly: true
           readinessProbe:
             httpGet:
               path: /ready
@@ -59,9 +84,9 @@ spec:
               cpu: "500m"
               memory: "512Mi"
       volumes:
-        - name: faq
-          configMap:
-            name: faq-context
+        - name: rag-data
+          persistentVolumeClaim:
+            claimName: rag-pvc
 ---
 apiVersion: v1
 kind: Service

@@ -11,7 +11,7 @@ spec:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
   hostPath:
-    path: /home/storage/ns/receptify/freeswitch
+    path: /home/storage/ns/receptify/freeswitch/conf
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -53,23 +53,6 @@ spec:
         freeswitch: "true"
       imagePullSecrets:
         - name: ghcr-secret
-      # Init container: copies default config to hostPath on first run
-      initContainers:
-        - name: init-config
-          image: ghcr.io/danipopa/freeswitch:latest
-          command:
-            - /bin/sh
-            - -c
-            - |
-              if [ -z "$(ls -A /data 2>/dev/null)" ]; then
-                echo "Copying default FreeSWITCH config to hostPath..."
-                cp -r /usr/local/freeswitch/conf/. /data/
-              else
-                echo "Config already present, skipping copy."
-              fi
-          volumeMounts:
-            - name: fs-config
-              mountPath: /data
       containers:
         - name: freeswitch
           image: ghcr.io/danipopa/freeswitch:latest
@@ -108,7 +91,7 @@ spec:
               protocol: TCP
           volumeMounts:
             - name: fs-config
-              mountPath: /etc/freeswitch
+              mountPath: /usr/local/freeswitch/conf
           livenessProbe:
             tcpSocket:
               port: 8021
