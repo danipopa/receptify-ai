@@ -50,7 +50,9 @@ HTTP_PORT   = int(os.getenv("HTTP_PORT",  "9095"))
 STT_URL       = os.getenv("STT_URL",       "http://stt-service:9092")
 RAG_URL       = os.getenv("RAG_URL",       "http://rag-service:9091")
 TTS_URL       = os.getenv("TTS_URL",       "http://tts-service:9093")
-FS_BRIDGE_URL = os.getenv("FS_BRIDGE_URL", "http://fs-bridge:9094")
+FS_BRIDGE_URL  = os.getenv("FS_BRIDGE_URL",  "http://fs-bridge:9094")
+API_URL        = os.getenv("API_URL",        "http://receptify-api")
+INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "")
 
 RECORDING_DIR     = os.getenv("RECORDING_DIR",     "/tmp/recordings")
 RECORDING_ENABLED = os.getenv("RECORDING_ENABLED", "false").lower() == "true"
@@ -121,6 +123,29 @@ def extract_uuid(path: str) -> str | None:
     return None
 
 
+def extract_did(path: str) -> str | None:
+    parsed = urlparse(path)
+    val = parse_qs(parsed.query).get("did")
+    return val[0] if val else None
+
+
+async def fetch_did_config(session: aiohttp.ClientSession, did: str) -> dict:
+    """Fetch per-DID tenant config from the internal API endpoint."""
+    try:
+        headers = {"X-Internal-Token": INTERNAL_TOKEN} if INTERNAL_TOKEN else {}
+        async with session.get(
+            f"{API_URL}/internal/dids/{did}/config",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=3),
+        ) as r:
+            if r.status == 200:
+                return await r.json()
+            log.warning("fetch_did_config status=%d did=%s", r.status, did)
+    except Exception as e:
+        log.warning("fetch_did_config error: %s", e)
+    return {}
+
+
 def save_wav(audio_bytes: bytes, name: str) -> str:
     path = os.path.join(RECORDING_DIR, name)
     with wave.open(path, "wb") as f:
@@ -153,11 +178,19 @@ async def stt_transcribe(session: aiohttp.ClientSession, pcm: bytes) -> str:
         return ""
 
 
-async def rag_query(session: aiohttp.ClientSession, text: str) -> str:
+async def rag_query(
+    session: aiohttp.ClientSession,
+    text: str,
+    tenant_id: int | None = None,
+    top_k: int = 3,
+) -> str:
     try:
+        payload: dict = {"text": text, "top_k": top_k}
+        if tenant_id:
+            payload["tenant_id"] = tenant_id
         async with session.post(
             f"{RAG_URL}/query",
-            json={"text": text, "top_k": 3},
+            json=payload,
             timeout=aiohttp.ClientTimeout(total=5),
         ) as r:
             data = await r.json()
@@ -217,7 +250,12 @@ async def process_audio(
     session: aiohttp.ClientSession,
     pcm: bytes,
     call_uuid: str | None,
+    call_config: dict | None = None,
 ) -> float:
+    cfg = call_config or {}
+    tenant_id = cfg.get("tenant_id")
+    top_k     = int(cfg.get("rag_top_k") or 3)
+
     audio_rms = rms(pcm)
     dur = len(pcm) / SAMPLE_RATE / 2
     log.info("Processing speech", extra={"call_uuid": call_uuid, "dur": round(dur, 2), "rms": round(audio_rms, 4)})
@@ -237,7 +275,7 @@ async def process_audio(
 
     log.info("Caller said: %s", text, extra={"call_uuid": call_uuid})
 
-    context = await rag_query(session, text)
+    context = await rag_query(session, text, tenant_id=tenant_id, top_k=top_k)
 
     # Build prompt
     prompt_context = context or "No specific context available."
@@ -301,8 +339,9 @@ async def handler(websocket):
            or getattr(websocket, "path", "/ws")
     conn_ts = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     call_uuid = extract_uuid(path)
+    did       = extract_did(path)
 
-    log.info("Client connected path=%s uuid=%s", path, call_uuid)
+    log.info("Client connected path=%s uuid=%s did=%s", path, call_uuid, did)
 
     audio_buffer    = bytearray()
     pre_speech_buf  = bytearray()
@@ -320,11 +359,20 @@ async def handler(websocket):
     pre_bytes     = int(SAMPLE_RATE * 2 * 0.4)
 
     async with aiohttp.ClientSession() as session:
+        # Fetch per-DID tenant config
+        call_config: dict = {}
+        if did:
+            call_config = await fetch_did_config(session, did)
+            log.info("DID config did=%s tenant_id=%s", did, call_config.get("tenant_id"),
+                     extra={"call_uuid": call_uuid})
+
+        welcome = call_config.get("welcome_message") or WELCOME_MESSAGE
+
         # Play welcome message on call connect
-        if call_uuid and WELCOME_MESSAGE:
+        if call_uuid and welcome:
             await asyncio.sleep(0.8)   # let FreeSWITCH finish call setup
             log.info("Sending welcome message", extra={"call_uuid": call_uuid})
-            wav = await tts_synthesize(session, WELCOME_MESSAGE)
+            wav = await tts_synthesize(session, welcome)
             if wav:
                 tts_dur = await fs_broadcast(session, call_uuid, wav)
                 muted_until = time.monotonic() + tts_dur + MUTE_BUFFER_SEC
@@ -407,7 +455,7 @@ async def handler(websocket):
                                  extra={"call_uuid": call_uuid})
 
                         try:
-                            tts_dur = await process_audio(session, captured, call_uuid)
+                            tts_dur = await process_audio(session, captured, call_uuid, call_config)
                             if tts_dur > 0:
                                 muted_until = time.monotonic() + tts_dur + MUTE_BUFFER_SEC
                         finally:

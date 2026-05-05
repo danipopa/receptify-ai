@@ -103,6 +103,13 @@ spec:
               value: https://api-m.paypal.com
             - name: ALLOWED_ORIGINS
               value: "https://app.receptify.us,https://www.receptify.us,https://receptify.us"
+            - name: AGENT_WS_URL
+              value: "ws://agent:9090"
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-secret
+                  key: INTERNAL_TOKEN
           readinessProbe:
             httpGet:
               path: /up

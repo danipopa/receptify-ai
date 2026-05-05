@@ -39,7 +39,8 @@ import numpy as np
 # Config
 # ---------------------------------------------------------------------------
 
-FAQ_FILE        = os.getenv("FAQ_FILE",        "/opt/receptify-ai/context/ai-ivr-context.txt")
+FAQ_DIR         = os.getenv("FAQ_DIR",        "/faq")
+FAQ_FILE        = os.getenv("FAQ_FILE",        os.path.join(FAQ_DIR, "default.txt"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 LLM_MODEL       = os.getenv("LLM_MODEL",       "llama3.2:3b")
 OLLAMA_HOST     = os.getenv("OLLAMA_HOST",     "127.0.0.1:11434")
@@ -85,7 +86,8 @@ class RagStore:
     BUILDING = "building"
     READY    = "ready"
 
-    def __init__(self) -> None:
+    def __init__(self, faq_file: str = FAQ_FILE) -> None:
+        self.faq_file      = faq_file
         self._lock         = threading.RLock()
         self._build_lock   = threading.Lock()   # only one build at a time
         self._chunks: list[str]             = []
@@ -119,8 +121,8 @@ class RagStore:
             return None
 
     def _load_text(self) -> str:
-        if os.path.exists(FAQ_FILE):
-            with open(FAQ_FILE, "r", encoding="utf-8") as f:
+        if os.path.exists(self.faq_file):
+            with open(self.faq_file, "r", encoding="utf-8") as f:
                 return f.read()
         return "Working hours are Monday to Friday, 9 AM to 5 PM."
 
@@ -234,6 +236,22 @@ class RagStore:
 
 store = RagStore()
 
+# Per-tenant store registry: tenant_id (int) → RagStore
+_tenant_stores: dict[int, RagStore] = {}
+_tenant_stores_lock = threading.Lock()
+
+
+def get_tenant_store(tenant_id: int) -> RagStore:
+    """Return (and lazily build) the store for a given tenant."""
+    with _tenant_stores_lock:
+        if tenant_id not in _tenant_stores:
+            faq = os.path.join(FAQ_DIR, f"{tenant_id}.txt")
+            ts = RagStore(faq_file=faq)
+            _tenant_stores[tenant_id] = ts
+            ts.build_in_background()
+            log.info("Created store for tenant_id=%d faq=%s", tenant_id, faq)
+        return _tenant_stores[tenant_id]
+
 # ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
@@ -271,14 +289,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/query":
             try:
-                body    = self._read_json()
-                text    = str(body.get("text", "")).strip()
-                top_k   = int(body.get("top_k", RAG_TOP_K))
+                body       = self._read_json()
+                text       = str(body.get("text", "")).strip()
+                top_k      = int(body.get("top_k", RAG_TOP_K))
+                tenant_id  = body.get("tenant_id")
                 if not text:
                     self._send_json(400, {"error": "text required"})
                     return
-                context = store.query(text, top_k)
-                log.info("query=%r top_k=%d → %d chars", text, top_k, len(context))
+                active_store = get_tenant_store(int(tenant_id)) if tenant_id else store
+                context = active_store.query(text, top_k)
+                log.info("query tenant=%s top_k=%d → %d chars", tenant_id, top_k, len(context))
                 self._send_json(200, {"context": context})
             except Exception as e:
                 log.exception("query error: %s", e)
@@ -299,9 +319,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": str(e)})
 
         elif self.path == "/rebuild":
-            started = store.build_in_background()
+            body = self._read_json() if self.headers.get("Content-Length", "0") != "0" else {}
+            tenant_id = body.get("tenant_id")
+            target = get_tenant_store(int(tenant_id)) if tenant_id else store
+            started = target.build_in_background()
             if started:
-                self._send_json(202, {"status": "building"})
+                self._send_json(202, {"status": "building", "tenant_id": tenant_id})
             else:
                 self._send_json(200, {"status": "already_building"})
 

@@ -42,6 +42,13 @@ spec:
               value: http://tts-service:9093
             - name: FS_BRIDGE_URL
               value: http://fs-bridge:9094
+            - name: API_URL
+              value: http://receptify-api
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-secret
+                  key: INTERNAL_TOKEN
             - name: RECORDING_ENABLED
               value: "false"
             - name: LOG_LEVEL

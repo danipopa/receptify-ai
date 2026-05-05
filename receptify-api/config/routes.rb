@@ -26,6 +26,13 @@ Rails.application.routes.draw do
   # Health check
   get "up", to: proc { [200, {}, ["ok"]] }
 
+  # Internal — used by agent/fs-bridge (authenticated by X-Internal-Token header)
+  namespace :internal do
+    get "dids/:number/config",      to: "dids#config"
+    get "dids/:number/fs_gateway",  to: "dids#fs_gateway"
+    get "dids/:number/fs_dialplan", to: "dids#fs_dialplan"
+  end
+
   # Root — return API info instead of 404
   root to: proc { [200, { "Content-Type" => "application/json" }, ['{"status":"ok","service":"receptify-api","version":"v1"}']] }
 end
