@@ -16,9 +16,28 @@ if [ -n "$FS_EXT_RTP_IP" ] && [ -f "$VARS_XML" ]; then
   sed -i 's|data="ext-rtp-ip=[^"]*"|data="ext-rtp-ip='"${FS_EXT_RTP_IP}"'"|' "$VARS_XML"
 fi
 
-# Inject ESL password
-if [ -n "$FS_ESL_PASSWORD" ] && [ -f "$ESL_CONF" ]; then
-  sed -i 's|<param name="password" value="[^"]*"/>|<param name="password" value="'"${FS_ESL_PASSWORD}"'"/>|' "$ESL_CONF"
+# Write event_socket.conf.xml — allow pod network in addition to loopback
+if [ -n "$FS_ESL_PASSWORD" ]; then
+  mkdir -p "$(dirname "$ESL_CONF")"
+  cat > "$ESL_CONF" <<EOF
+<configuration name="event_socket.conf" description="Socket Client">
+  <settings>
+    <param name="nat-map" value="false"/>
+    <param name="listen-ip" value="0.0.0.0"/>
+    <param name="listen-port" value="8021"/>
+    <param name="password" value="${FS_ESL_PASSWORD}"/>
+    <param name="apply-inbound-acl" value="esl_acl"/>
+  </settings>
+</configuration>
+EOF
+  # Write ACL to allow loopback + pod network (172.16.0.0/12 covers 172.31.x.x)
+  ACL_CONF=/usr/local/freeswitch/conf/autoload_configs/acl.conf.xml
+  if [ -f "$ACL_CONF" ]; then
+    # Add esl_acl list if not already present
+    if ! grep -q "esl_acl" "$ACL_CONF"; then
+      sed -i 's|</network-lists>|  <list name="esl_acl" default="deny">\n      <node type="allow" cidr="127.0.0.1/32"/>\n      <node type="allow" cidr="172.16.0.0/12"/>\n      <node type="allow" cidr="10.0.0.0/8"/>\n    </list>\n  </network-lists>|' "$ACL_CONF"
+    fi
+  fi
 fi
 
 # Write xml_curl.conf.xml if API_URL is set
