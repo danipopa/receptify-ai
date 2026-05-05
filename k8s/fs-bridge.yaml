@@ -55,6 +55,8 @@ spec:
           volumeMounts:
             - name: wav
               mountPath: /tmp/fs-bridge-wav
+            - name: fs-conf
+              mountPath: /usr/local/freeswitch/conf
           readinessProbe:
             httpGet:
               path: /ready
@@ -79,6 +81,10 @@ spec:
       volumes:
         - name: wav
           emptyDir: {}
+        - name: fs-conf
+          hostPath:
+            path: /home/storage/ns/receptify/freeswitch
+            type: Directory
 ---
 # Secret for FreeSWITCH ESL password
 # kubectl create secret generic freeswitch-secret --from-literal=esl-password=ClueCon

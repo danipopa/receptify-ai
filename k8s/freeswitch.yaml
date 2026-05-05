@@ -73,6 +73,13 @@ spec:
                 secretKeyRef:
                   name: freeswitch-secret
                   key: FS_ESL_PASSWORD
+            - name: API_URL
+              value: http://receptify-api
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-api-secret
+                  key: INTERNAL_TOKEN
           ports:
             - name: sip-udp
               containerPort: 5060

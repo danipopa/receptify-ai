@@ -28,9 +28,11 @@ Rails.application.routes.draw do
 
   # Internal — used by agent/fs-bridge (authenticated by X-Internal-Token header)
   namespace :internal do
-    get "dids/:number/config",      to: "dids#config"
-    get "dids/:number/fs_gateway",  to: "dids#fs_gateway"
-    get "dids/:number/fs_dialplan", to: "dids#fs_dialplan"
+    get  "dids/:number/config",          to: "dids#config"
+    get  "dids/:number/fs_gateway",      to: "dids#fs_gateway"
+    get  "dids/:number/fs_dialplan",     to: "dids#fs_dialplan"
+    post "freeswitch/xml",               to: "freeswitch#xml"
+    post "freeswitch/cdr",               to: "freeswitch#cdr"
   end
 
   # Root — return API info instead of 404

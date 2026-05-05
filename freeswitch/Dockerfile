@@ -62,6 +62,12 @@ RUN sed -i \
     -e 's|^[#[:space:]]*endpoints/mod_verto|#endpoints/mod_verto|' \
     modules.conf
 
+# Ensure mod_xml_curl and mod_xml_cdr are enabled
+RUN sed -i \
+    -e 's|^#[[:space:]]*xml_int/mod_xml_curl|xml_int/mod_xml_curl|' \
+    -e 's|^#[[:space:]]*loggers/mod_xml_cdr|loggers/mod_xml_cdr|' \
+    modules.conf
+
 RUN ./configure \
     --prefix=/usr/local/freeswitch \
     --with-openssl \
@@ -82,10 +88,10 @@ RUN mkdir -p /usr/src/freeswitch_mod_audio_stream/build \
     && make -j$(nproc) \
     && cp mod_audio_stream.so /usr/local/freeswitch/lib/freeswitch/mod/
 
-# Load mod_audio_stream automatically
+# Load mod_audio_stream, mod_xml_curl, mod_xml_cdr automatically
 RUN MODULES_CONF="$(find /usr/local/freeswitch -name modules.conf.xml | head -n 1)" \
     && echo "Using modules config: ${MODULES_CONF}" \
-    && sed -i 's|</modules>|  <load module="mod_audio_stream"/>\n</modules>|' "$MODULES_CONF"
+    && sed -i 's|</modules>|  <load module="mod_audio_stream"/>\n  <load module="mod_xml_curl"/>\n  <load module="mod_xml_cdr"/>\n</modules>|' "$MODULES_CONF"
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
