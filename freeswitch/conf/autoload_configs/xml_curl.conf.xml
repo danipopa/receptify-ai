@@ -1,0 +1,8 @@
+<configuration name="xml_curl.conf" description="cURL XML Gateway">
+  <bindings>
+    <binding name="receptify">
+      <param name="gateway-url" value="http://receptify-api/internal/freeswitch/xml"/>
+      <param name="bindings" value="configuration|dialplan|directory"/>
+    </binding>
+  </bindings>
+</configuration>

@@ -34,8 +34,6 @@ spec:
             - containerPort: 9094
               hostPort: 9094
           env:
-            - name: FS_CLI
-              value: /usr/local/freeswitch/bin/fs_cli
             - name: FS_HOST
               value: "127.0.0.1"
             - name: FS_PORT
@@ -56,8 +54,6 @@ spec:
           volumeMounts:
             - name: wav
               mountPath: /tmp/fs-bridge-wav
-            - name: fs-conf
-              mountPath: /usr/local/freeswitch/conf
           readinessProbe:
             httpGet:
               path: /ready
@@ -82,13 +78,24 @@ spec:
       volumes:
         - name: wav
           emptyDir: {}
-        - name: fs-conf
-          hostPath:
-            path: /home/storage/ns/receptify/freeswitch
-            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fs-bridge
+  namespace: receptify
+  labels:
+    app: fs-bridge
+spec:
+  selector:
+    app: fs-bridge
+  ports:
+    - port: 9094
+      targetPort: 9094
+      protocol: TCP
 ---
 # Secret for FreeSWITCH ESL password
-# kubectl create secret generic freeswitch-secret --from-literal=esl-password=ClueCon
+# kubectl create secret generic freeswitch-secret --from-literal=esl-password=R3c3pt1fy#ESL@xP9kZm2X
 apiVersion: v1
 kind: Secret
 metadata:
@@ -96,4 +103,5 @@ metadata:
   namespace: receptify
 type: Opaque
 stringData:
-  esl-password: ClueCon    # change before deploying to production
+  FS_ESL_PASSWORD: R3c3pt1fy#ESL@xP9kZm2X
+  FS_EXT_SIP_IP: "176.9.65.80"

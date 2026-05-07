@@ -18,6 +18,8 @@ module Internal
         render_dialplan
       when "directory"
         render_directory
+      when "configuration"
+        render_configuration
       else
         render_not_found
       end
@@ -103,6 +105,118 @@ module Internal
                 </variables>
               </user>
             </domain>
+          </section>
+        </document>
+      XML
+
+      render plain: xml, content_type: "text/xml"
+    end
+
+    def render_configuration
+      # FreeSWITCH requests configuration sections via xml_curl on startup and on
+      # "sofia profile external rescan".  We only handle sofia.conf — all other
+      # sections get a not-found so FreeSWITCH falls back to its static files.
+      unless params[:key_value] == "sofia.conf"
+        return render_not_found
+      end
+
+      ext_ip  = ENV.fetch("FS_EXT_SIP_IP", "auto-nat")
+
+      gateways = Did.where(gateway_type: "sip_registration", status: "active")
+
+      gateway_xml = gateways.map do |did|
+        realm = did.gateway_realm.presence || did.gateway_host
+        port  = did.gateway_port || 5060
+        <<~GATEWAY
+          <gateway name="#{did.fs_gateway_name}">
+            <param name="username"            value="#{did.gateway_user}"/>
+            <param name="password"            value="#{did.gateway_password}"/>
+            <param name="proxy"               value="#{did.gateway_host}:#{port}"/>
+            <param name="realm"               value="#{realm}"/>
+            <param name="register"            value="true"/>
+            <param name="caller-id-in-from"   value="false"/>
+            <param name="context"             value="public"/>
+          </gateway>
+        GATEWAY
+      end.join
+
+      xml = <<~XML
+        <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+        <document type="freeswitch/xml">
+          <section name="configuration">
+            <configuration name="sofia.conf" description="Sofia SIP">
+              <global_settings>
+                <param name="log-level" value="0"/>
+                <param name="debug-presence" value="0"/>
+              </global_settings>
+              <profiles>
+                <profile name="internal">
+                  <gateways/>
+                  <aliases/>
+                  <domains>
+                    <domain name="all" alias="true" parse="false"/>
+                  </domains>
+                  <settings>
+                    <param name="debug"                           value="0"/>
+                    <param name="sip-trace"                       value="no"/>
+                    <param name="rfc2833-pt"                      value="101"/>
+                    <param name="sip-port"                        value="5060"/>
+                    <param name="dialplan"                        value="XML"/>
+                    <param name="context"                         value="public"/>
+                    <param name="dtmf-duration"                   value="2000"/>
+                    <param name="inbound-codec-prefs"             value="OPUS,G722,PCMU,PCMA"/>
+                    <param name="outbound-codec-prefs"            value="OPUS,G722,PCMU,PCMA"/>
+                    <param name="inbound-codec-negotiation"       value="generous"/>
+                    <param name="rtp-ip"                          value="0.0.0.0"/>
+                    <param name="sip-ip"                          value="0.0.0.0"/>
+                    <param name="ext-rtp-ip"                      value="#{ext_ip}"/>
+                    <param name="ext-sip-ip"                      value="#{ext_ip}"/>
+                    <param name="rtp-timer-name"                  value="soft"/>
+                    <param name="hold-music"                      value="local_stream://moh"/>
+                    <param name="manage-presence"                 value="false"/>
+                    <param name="aggressive-nat-detection"        value="true"/>
+                    <param name="enable-timer"                    value="false"/>
+                    <param name="rtp-timeout-sec"                 value="300"/>
+                    <param name="rtp-hold-timeout-sec"            value="1800"/>
+                    <param name="auth-calls"                      value="false"/>
+                    <param name="nonce-ttl"                       value="60"/>
+                  </settings>
+                </profile>
+                <profile name="external">
+                  <gateways>
+                    #{gateway_xml.indent(20).lstrip}
+                  </gateways>
+                  <aliases/>
+                  <domains/>
+                  <settings>
+                    <param name="debug"                           value="0"/>
+                    <param name="sip-trace"                       value="no"/>
+                    <param name="rfc2833-pt"                      value="101"/>
+                    <param name="sip-port"                        value="5080"/>
+                    <param name="dialplan"                        value="XML"/>
+                    <param name="context"                         value="public"/>
+                    <param name="dtmf-duration"                   value="2000"/>
+                    <param name="inbound-codec-prefs"             value="OPUS,G722,PCMU,PCMA"/>
+                    <param name="outbound-codec-prefs"            value="OPUS,G722,PCMU,PCMA"/>
+                    <param name="inbound-codec-negotiation"       value="generous"/>
+                    <param name="rtp-ip"                          value="0.0.0.0"/>
+                    <param name="sip-ip"                          value="0.0.0.0"/>
+                    <param name="ext-rtp-ip"                      value="#{ext_ip}"/>
+                    <param name="ext-sip-ip"                      value="#{ext_ip}"/>
+                    <param name="rtp-timer-name"                  value="soft"/>
+                    <param name="hold-music"                      value="local_stream://moh"/>
+                    <param name="local-network-acl"               value="localnet.auto"/>
+                    <param name="manage-presence"                 value="false"/>
+                    <param name="enable-timer"                    value="false"/>
+                    <param name="auth-calls"                      value="false"/>
+                    <param name="inbound-late-negotiation"        value="true"/>
+                    <param name="nonce-ttl"                       value="60"/>
+                    <param name="rtp-timeout-sec"                 value="300"/>
+                    <param name="rtp-hold-timeout-sec"            value="1800"/>
+                  </settings>
+                </profile>
+              </profiles>
+            </configuration>
           </section>
         </document>
       XML

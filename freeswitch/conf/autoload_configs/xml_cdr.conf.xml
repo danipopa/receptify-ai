@@ -1,0 +1,11 @@
+<configuration name="xml_cdr.conf" description="XML CDR">
+  <settings>
+    <param name="url" value="http://receptify-api/internal/freeswitch/cdr"/>
+    <param name="retries" value="2"/>
+    <param name="delay" value="5000"/>
+    <param name="method" value="POST"/>
+    <param name="encode" value="true"/>
+    <param name="log-b-leg" value="false"/>
+    <param name="prefix-a-leg" value="false"/>
+  </settings>
+</configuration>

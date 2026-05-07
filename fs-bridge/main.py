@@ -1,8 +1,8 @@
 """
 fs-bridge — FreeSWITCH ESL HTTP bridge.
 
-Wraps fs_cli subprocess calls in a clean HTTP API so no other service
-needs to know about FreeSWITCH binaries or the ESL protocol.
+Connects directly to FreeSWITCH ESL (port 8021) over a persistent TCP socket;
+no fs_cli binary required.
 
 Endpoints:
   GET  /health
@@ -12,19 +12,15 @@ Endpoints:
                                        → {"status": "ok", "duration": 3.2}
   POST /uuid/{uuid}/command            body: {"command": "..."}
                                        → {"output": "..."}
-  POST /sync/gateway                   body: {"name": "did-15551234567", "xml": "..."}
-                                       → {"status": "ok"}
-  DELETE /sync/gateway/{name}          → {"status": "ok"}
-  POST /sync/dialplan                  body: {"name": "did-15551234567", "xml": "..."}
-                                       → {"status": "ok"}
-  DELETE /sync/dialplan/{name}         → {"status": "ok"}
+  POST /sync/reload                    → {"status": "ok"}
+                                       Triggers ESL "sofia profile external rescan";
+                                       FreeSWITCH re-fetches sofia.conf from xml_curl
+                                       (picking up gateway add/remove from the API DB).
 
 Environment variables:
-  FS_CLI         /usr/local/freeswitch/bin/fs_cli
   FS_HOST        127.0.0.1
   FS_PORT        8021
-  FS_PASSWORD    ClueCon
-  FS_CONF_DIR    /usr/local/freeswitch/conf
+  FS_PASSWORD    R3c3pt1fy#ESL@xP9kZm2X
   HOST           0.0.0.0
   PORT           9094
   WAV_DIR        /tmp/fs-bridge-wav
@@ -36,8 +32,8 @@ import json
 import logging
 import os
 import re
-import subprocess
-import tempfile
+import socket
+import threading
 import wave
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -45,11 +41,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # Config
 # ---------------------------------------------------------------------------
 
-FS_CLI      = os.getenv("FS_CLI",      "/usr/local/freeswitch/bin/fs_cli")
 FS_HOST     = os.getenv("FS_HOST",     "127.0.0.1")
-FS_PORT     = os.getenv("FS_PORT",     "8021")
-FS_PASSWORD = os.getenv("FS_PASSWORD", "ClueCon")
-FS_CONF_DIR = os.getenv("FS_CONF_DIR", "/usr/local/freeswitch/conf")
+FS_PORT     = int(os.getenv("FS_PORT", "8021"))
+FS_PASSWORD = os.getenv("FS_PASSWORD", "R3c3pt1fy#ESL@xP9kZm2X")
 HOST        = os.getenv("HOST",        "0.0.0.0")
 PORT        = int(os.getenv("PORT",    "9094"))
 WAV_DIR     = os.getenv("WAV_DIR",     "/tmp/fs-bridge-wav")
@@ -82,29 +76,93 @@ UUID_RE = re.compile(
 )
 
 # ---------------------------------------------------------------------------
-# FreeSWITCH helpers
+# ESL connection
 # ---------------------------------------------------------------------------
 
+class ESLConnection:
+    """Persistent FreeSWITCH ESL API connection with auto-reconnect."""
+
+    def __init__(self, host: str, port: int, password: str) -> None:
+        self._host = host
+        self._port = port
+        self._password = password
+        self._sock: socket.socket | None = None
+        self._lock = threading.Lock()
+
+    def _read_packet(self, sock: socket.socket) -> dict:
+        """Read one ESL packet → {"headers": {…}, "body": str}."""
+        buf = b""
+        while b"\n\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("ESL socket closed")
+            buf += chunk
+
+        header_bytes, remainder = buf.split(b"\n\n", 1)
+        headers: dict[str, str] = {}
+        for line in header_bytes.decode(errors="replace").splitlines():
+            if ":" in line:
+                k, _, v = line.partition(":")
+                headers[k.strip()] = v.strip()
+
+        content_len = int(headers.get("Content-Length", 0))
+        body = remainder
+        while len(body) < content_len:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("ESL socket closed")
+            body += chunk
+
+        return {"headers": headers, "body": body[:content_len].decode(errors="replace")}
+
+    def _connect(self) -> None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        sock.connect((self._host, self._port))
+
+        pkt = self._read_packet(sock)
+        if pkt["headers"].get("Content-Type") != "auth/request":
+            raise ConnectionError(f"Unexpected ESL greeting: {pkt['headers']}")
+
+        sock.sendall(f"auth {self._password}\n\n".encode())
+        pkt = self._read_packet(sock)
+        reply = pkt["headers"].get("Reply-Text", "")
+        if not reply.startswith("+OK"):
+            raise ConnectionError(f"ESL auth rejected: {reply}")
+
+        self._sock = sock
+        log.info("ESL connected to %s:%d", self._host, self._port)
+
+    def _close(self) -> None:
+        if self._sock:
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+            self._sock = None
+
+    def api(self, command: str, timeout: int = 10) -> str:
+        """Send an ESL API command and return the response body."""
+        with self._lock:
+            for attempt in range(2):
+                try:
+                    if self._sock is None:
+                        self._connect()
+                    self._sock.settimeout(timeout)  # type: ignore[union-attr]
+                    self._sock.sendall(f"api {command}\n\n".encode())  # type: ignore[union-attr]
+                    pkt = self._read_packet(self._sock)  # type: ignore[arg-type]
+                    return pkt["body"].strip()
+                except Exception as exc:
+                    log.warning("ESL api (attempt %d) %s: %s", attempt + 1, command, exc)
+                    self._close()
+            return ""
+
+
+_esl = ESLConnection(FS_HOST, FS_PORT, FS_PASSWORD)
+
+
 def _fs_cmd(command: str, timeout: int = 5) -> str:
-    try:
-        result = subprocess.check_output(
-            [FS_CLI,
-             "-H", FS_HOST,
-             "-P", FS_PORT,
-             "-p", FS_PASSWORD,
-             "-x", command],
-            text=True,
-            timeout=timeout,
-            stderr=subprocess.STDOUT,
-        ).strip()
-        return result
-    except subprocess.TimeoutExpired:
-        log.warning("fs_cli timeout: %s", command)
-    except subprocess.CalledProcessError as e:
-        log.warning("fs_cli error: %s → %s", command, e.output)
-    except Exception as e:
-        log.warning("fs_cli exception: %s", e)
-    return ""
+    return _esl.api(command, timeout=timeout)
 
 
 def uuid_exists(call_uuid: str) -> bool:
@@ -125,54 +183,6 @@ def broadcast_wav(call_uuid: str, wav_path: str) -> float:
     _fs_cmd(cmd, timeout=8)
     return get_wav_duration(wav_path)
 
-
-# ---------------------------------------------------------------------------
-# Config file management
-# ---------------------------------------------------------------------------
-
-_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-
-
-def _safe_name(name: str) -> bool:
-    return bool(_NAME_RE.match(name)) and len(name) <= 80
-
-
-def write_gateway(name: str, xml: str) -> None:
-    path = os.path.join(FS_CONF_DIR, "sip_profiles", "external", f"{name}.xml")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        f.write(xml)
-    log.info("Wrote gateway config: %s", path)
-    _fs_cmd("sofia profile external rescan", timeout=10)
-
-
-def delete_gateway(name: str) -> bool:
-    path = os.path.join(FS_CONF_DIR, "sip_profiles", "external", f"{name}.xml")
-    if os.path.exists(path):
-        os.remove(path)
-        log.info("Deleted gateway config: %s", path)
-        _fs_cmd("sofia profile external rescan", timeout=10)
-        return True
-    return False
-
-
-def write_dialplan(name: str, xml: str) -> None:
-    path = os.path.join(FS_CONF_DIR, "dialplan", "public", f"{name}.xml")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        f.write(xml)
-    log.info("Wrote dialplan config: %s", path)
-    _fs_cmd("reloadxml", timeout=10)
-
-
-def delete_dialplan(name: str) -> bool:
-    path = os.path.join(FS_CONF_DIR, "dialplan", "public", f"{name}.xml")
-    if os.path.exists(path):
-        os.remove(path)
-        log.info("Deleted dialplan config: %s", path)
-        _fs_cmd("reloadxml", timeout=10)
-        return True
-    return False
 
 # ---------------------------------------------------------------------------
 # HTTP handler
@@ -203,12 +213,9 @@ class Handler(BaseHTTPRequestHandler):
                 return candidate
         return None
 
-    def _parse_sync(self) -> tuple[str, str] | tuple[None, None]:
-        # /sync/<type>  or  /sync/<type>/<name>
+    def _is_sync_reload(self) -> bool:
         parts = [p for p in self.path.split("/") if p]
-        if len(parts) >= 2 and parts[0] == "sync":
-            return parts[1], parts[2] if len(parts) >= 3 else ""
-        return None, None
+        return parts == ["sync", "reload"]
 
     def do_GET(self):
         if self.path in ("/health", "/ready"):
@@ -237,7 +244,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(404, {"error": "call uuid not found"})
                     return
 
-                # Write WAV to temp file (fs_cli path must be filesystem-accessible)
+                # WAV path must be accessible by FreeSWITCH (same node, shared volume)
                 ts  = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S-%f")
                 wav = os.path.join(WAV_DIR, f"tts-{call_uuid[:8]}-{ts}.wav")
                 with open(wav, "wb") as f:
@@ -265,47 +272,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": str(e)})
             return
 
-        sync_type, sync_name = self._parse_sync()
-
-        if sync_type in ("gateway", "dialplan") and not sync_name:
+        if self._is_sync_reload():
             try:
-                body = json.loads(self._read_body() or b"{}")
-                name = str(body.get("name", "")).strip()
-                xml  = str(body.get("xml",  "")).strip()
-                if not name or not xml:
-                    self._send_json(400, {"error": "name and xml required"})
-                    return
-                if not _safe_name(name):
-                    self._send_json(400, {"error": "invalid name"})
-                    return
-                if sync_type == "gateway":
-                    write_gateway(name, xml)
-                else:
-                    write_dialplan(name, xml)
-                self._send_json(200, {"status": "ok", "name": name})
+                self._read_body()  # drain
+                _fs_cmd("sofia profile external rescan", timeout=15)
+                log.info("sofia profile external rescan triggered")
+                self._send_json(200, {"status": "ok"})
             except Exception as e:
-                log.exception("sync %s error: %s", sync_type, e)
+                log.exception("reload error: %s", e)
                 self._send_json(500, {"error": str(e)})
             return
 
-        self._send_json(404, {"error": "not found"})
-
-    def do_DELETE(self):
-        sync_type, sync_name = self._parse_sync()
-        if sync_type in ("gateway", "dialplan") and sync_name:
-            if not _safe_name(sync_name):
-                self._send_json(400, {"error": "invalid name"})
-                return
-            try:
-                if sync_type == "gateway":
-                    found = delete_gateway(sync_name)
-                else:
-                    found = delete_dialplan(sync_name)
-                self._send_json(200, {"status": "ok", "deleted": found})
-            except Exception as e:
-                log.exception("delete %s error: %s", sync_type, e)
-                self._send_json(500, {"error": str(e)})
-            return
         self._send_json(404, {"error": "not found"})
 
 

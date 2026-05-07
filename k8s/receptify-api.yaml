@@ -112,6 +112,11 @@ spec:
                 secretKeyRef:
                   name: receptify-api-secret
                   key: INTERNAL_TOKEN
+            - name: FS_EXT_SIP_IP
+              valueFrom:
+                secretKeyRef:
+                  name: freeswitch-secret
+                  key: FS_EXT_SIP_IP
           readinessProbe:
             httpGet:
               path: /up

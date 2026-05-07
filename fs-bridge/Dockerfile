@@ -1,15 +1,12 @@
-FROM ghcr.io/danipopa/freeswitch:latest
-
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip && rm -rf /var/lib/apt/lists/*
+FROM python:3.12-slim
 
 WORKDIR /app
 COPY requirements.txt .
 COPY main.py .
 
-ENV FS_CLI=/usr/local/freeswitch/bin/fs_cli \
-    FS_HOST=127.0.0.1 \
+ENV FS_HOST=127.0.0.1 \
     FS_PORT=8021 \
-    FS_PASSWORD=ClueCon \
+    FS_PASSWORD=R3c3pt1fy#ESL@xP9kZm2X \
     HOST=0.0.0.0 \
     PORT=9094 \
     WAV_DIR=/tmp/fs-bridge-wav \

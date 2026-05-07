@@ -51,7 +51,7 @@ else
   echo "==> [3b] Creating secret 'freeswitch-secret'..."
   kubectl create secret generic freeswitch-secret \
     --namespace "$NAMESPACE" \
-    --from-literal=esl-password="${FS_ESL_PASSWORD:-ClueCon}"
+    --from-literal=esl-password="${FS_ESL_PASSWORD:-R3c3pt1fy#ESL@xP9kZm2X}"
 fi
 
 echo "==> [4/6] Creating storage directory on host..."

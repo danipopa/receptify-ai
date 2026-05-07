@@ -39,9 +39,9 @@ if [ -n "$API_URL" ]; then
   cat > "$XML_CURL_CONF" <<EOF
 <configuration name="xml_curl.conf" description="cURL XML Gateway">
   <bindings>
-    <binding name="receptify-dialplan">
+    <binding name="receptify">
       <param name="gateway-url" value="${API_URL}/internal/freeswitch/xml"/>
-      <param name="bindings" value="dialplan|directory"/>
+      <param name="bindings" value="configuration|dialplan|directory"/>
     </binding>
   </bindings>
 </configuration>
