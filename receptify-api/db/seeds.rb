@@ -22,3 +22,18 @@ end
 puts "  Email:    admin@receptify.local"
 puts "  Password: receptify123"
 puts "  API Key:  #{tenant.api_key}"
+
+did = Did.find_or_initialize_by(number: "+17735414761")
+did.assign_attributes(
+  provider:         "twilio",
+  status:           "active",
+  tenant:           tenant,
+  gateway_type:     "sip_registration",
+  gateway_host:     "sip.callcentric.net",
+  gateway_user:     "17778763557",
+  gateway_password: ENV.fetch("SEED_DID_PASSWORD", "changeme"),
+  gateway_realm:    "sip.callcentric.net",
+  gateway_port:     5060
+)
+did.save!
+puts "Seed DID: #{did.number} (#{did.gateway_type} via #{did.gateway_host})"

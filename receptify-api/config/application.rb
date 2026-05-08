@@ -40,5 +40,14 @@ module ReceptifyApi
     # Middleware like session, flash, cookies can be added back manually.
     # Skip views, helpers and assets when generating a new resource.
     config.api_only = true
+
+    # Allow requests from service-name hostnames (Docker/k8s) and any hosts in ALLOWED_HOSTS env var.
+    config.hosts = [
+      "localhost",
+      "127.0.0.1",
+      /\Alocalhost(:\d+)?\z/,
+      /.*\.receptify\.us/,
+      *ENV.fetch("ALLOWED_HOSTS", "receptify-api").split(",").map { |h| /\A#{Regexp.escape(h.strip)}(:\d+)?\z/ }
+    ]
   end
 end

@@ -14,7 +14,7 @@ if [ ! -f "$ENV_FILE" ]; then
     cp "$BASE/.env.example" "$ENV_FILE"
 fi
 
-# Load .env
+# Load .env — values with special chars (e.g. # in passwords) must be quoted in .env
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"

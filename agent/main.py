@@ -63,10 +63,10 @@ WELCOME_MESSAGE   = os.getenv(
     "Thank you for calling. How can I help you today?",
 )
 
-CAPTURE_RATE      = 48000
+CAPTURE_RATE      = 8000
 SAMPLE_RATE       = CAPTURE_RATE
 FRAME_MS          = 20
-FRAME_SIZE        = int(SAMPLE_RATE * FRAME_MS / 1000) * 2   # bytes
+FRAME_SIZE        = int(SAMPLE_RATE * FRAME_MS / 1000) * 2   # bytes  (320 bytes @ 8kHz)
 
 SILENCE_MS        = int(os.getenv("SILENCE_MS",    "900"))
 MIN_SPEECH_SEC    = float(os.getenv("MIN_SPEECH_SEC", "0.8"))
@@ -341,7 +341,8 @@ async def handler(websocket):
     call_uuid = extract_uuid(path)
     did       = extract_did(path)
 
-    log.info("Client connected path=%s uuid=%s did=%s", path, call_uuid, did)
+    log.info("WS connected path=%s uuid=%s did=%s",
+             path, call_uuid, did)
 
     audio_buffer    = bytearray()
     pre_speech_buf  = bytearray()
@@ -493,13 +494,8 @@ async def http_health_server():
     log.info("Health server on :%d", HTTP_PORT)
 
 # ---------------------------------------------------------------------------
-# WebSocket upgrade logger
+# WebSocket upgrade logger (removed — was incompatible with websockets>=13)
 # ---------------------------------------------------------------------------
-
-async def process_request(connection, request):
-    log.info("WS upgrade from=%s path=%s",
-             connection.remote_address, request.path)
-    return None
 
 # ---------------------------------------------------------------------------
 # Entry point
@@ -526,7 +522,6 @@ async def main():
         ping_timeout=None,
         close_timeout=5,
         reuse_port=True,
-        process_request=process_request,
     ):
         log.info("Agent ready on ws://%s:%d", WS_HOST, WS_PORT)
         await stop

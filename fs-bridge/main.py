@@ -24,6 +24,7 @@ Environment variables:
   HOST           0.0.0.0
   PORT           9094
   WAV_DIR        /tmp/fs-bridge-wav
+  AGENT_WS_URL   ws://127.0.0.1:9090
   LOG_LEVEL      INFO
 """
 
@@ -34,6 +35,7 @@ import os
 import re
 import socket
 import threading
+import time
 import wave
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -47,7 +49,8 @@ FS_PASSWORD = os.getenv("FS_PASSWORD", "R3c3pt1fy#ESL@xP9kZm2X")
 HOST        = os.getenv("HOST",        "0.0.0.0")
 PORT        = int(os.getenv("PORT",    "9094"))
 WAV_DIR     = os.getenv("WAV_DIR",     "/tmp/fs-bridge-wav")
-LOG_LEVEL   = os.getenv("LOG_LEVEL",   "INFO").upper()
+LOG_LEVEL      = os.getenv("LOG_LEVEL",      "INFO").upper()
+AGENT_WS_URL   = os.getenv("AGENT_WS_URL",   "ws://127.0.0.1:9090")
 
 os.makedirs(WAV_DIR, exist_ok=True)
 
@@ -159,6 +162,110 @@ class ESLConnection:
 
 
 _esl = ESLConnection(FS_HOST, FS_PORT, FS_PASSWORD)
+
+
+def _esl_read_packet(sock: socket.socket) -> dict:
+    """Read one ESL packet from a raw socket (used by ESLEventListener)."""
+    buf = b""
+    while b"\n\n" not in buf:
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise ConnectionError("ESL socket closed")
+        buf += chunk
+    header_bytes, remainder = buf.split(b"\n\n", 1)
+    headers: dict[str, str] = {}
+    for line in header_bytes.decode(errors="replace").splitlines():
+        if ":" in line:
+            k, _, v = line.partition(":")
+            headers[k.strip()] = v.strip()
+    content_len = int(headers.get("Content-Length", 0))
+    body = remainder
+    while len(body) < content_len:
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise ConnectionError("ESL socket closed")
+        body += chunk
+    return {"headers": headers, "body": body[:content_len].decode(errors="replace")}
+
+
+class ESLEventListener:
+    """
+    Opens a second ESL connection subscribed to CHANNEL_ANSWER events.
+    When a call is answered with variable_call_did set, fires uuid_audio_stream
+    via the shared _esl API connection.
+    """
+
+    def __init__(self, host: str, port: int, password: str, agent_ws_url: str) -> None:
+        self._host = host
+        self._port = port
+        self._password = password
+        self._agent_ws_url = agent_ws_url.rstrip("/")
+
+    def start(self) -> None:
+        t = threading.Thread(target=self._run, daemon=True, name="esl-events")
+        t.start()
+        log.info("ESL event listener thread started")
+
+    def _run(self) -> None:
+        while True:
+            try:
+                self._connect_and_listen()
+            except Exception as exc:
+                log.warning("ESL event listener error: %s — retrying in 5s", exc)
+                time.sleep(5)
+
+    def _connect_and_listen(self) -> None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        sock.connect((self._host, self._port))
+
+        pkt = _esl_read_packet(sock)
+        if pkt["headers"].get("Content-Type") != "auth/request":
+            raise ConnectionError(f"Unexpected ESL greeting: {pkt['headers']}")
+
+        sock.sendall(f"auth {self._password}\n\n".encode())
+        pkt = _esl_read_packet(sock)
+        if not pkt["headers"].get("Reply-Text", "").startswith("+OK"):
+            raise ConnectionError("ESL event auth failed")
+
+        sock.sendall(b"event plain CHANNEL_ANSWER\n\n")
+        _esl_read_packet(sock)  # consume the +OK command/reply
+        log.info("ESL event listener connected, subscribed to CHANNEL_ANSWER")
+
+        sock.settimeout(60)
+        while True:
+            try:
+                pkt = _esl_read_packet(sock)
+            except socket.timeout:
+                # keepalive ping
+                sock.sendall(b"api status\n\n")
+                _esl_read_packet(sock)
+                continue
+            if pkt["headers"].get("Content-Type") == "text/event-plain":
+                self._handle_event(pkt["body"])
+
+    def _handle_event(self, body: str) -> None:
+        headers: dict[str, str] = {}
+        for line in body.splitlines():
+            if ":" in line:
+                k, _, v = line.partition(":")
+                headers[k.strip()] = v.strip()
+
+        if headers.get("Event-Name") != "CHANNEL_ANSWER":
+            return
+
+        uuid     = headers.get("Unique-ID", "")
+        call_did = headers.get("variable_call_did", "")
+
+        if not uuid or not call_did:
+            log.debug("CHANNEL_ANSWER without call_did — skipping (not a receptify call)")
+            return
+
+        ws_url = f"{self._agent_ws_url}/ws/{uuid}?did={call_did}"
+        cmd    = f"uuid_audio_stream {uuid} start {ws_url} mono 8000"
+        log.info("Starting audio stream uuid=%s did=%s url=%s", uuid, call_did, ws_url)
+        result = _esl.api(cmd, timeout=10)
+        log.info("uuid_audio_stream result: %s", result)
 
 
 def _fs_cmd(command: str, timeout: int = 5) -> str:
@@ -291,6 +398,7 @@ class Handler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    ESLEventListener(FS_HOST, FS_PORT, FS_PASSWORD, AGENT_WS_URL).start()
     server = HTTPServer((HOST, PORT), Handler)
     log.info("fs-bridge listening on http://%s:%d", HOST, PORT)
     try:

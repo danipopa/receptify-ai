@@ -4,8 +4,7 @@ module Internal
     # We skip token auth for these endpoints (they're not exposed via ingress).
     skip_before_action :verify_authenticity_token, raise: false
 
-    AGENT_WS_URL = ENV.fetch("AGENT_WS_URL", "ws://agent:9090")
-    FS_DOMAIN    = ENV.fetch("FS_DOMAIN", "receptify.local")
+    FS_DOMAIN = ENV.fetch("FS_DOMAIN", "receptify.local")
 
     # POST /internal/freeswitch/xml
     # Called by mod_xml_curl with form params:
@@ -44,15 +43,18 @@ module Internal
     private
 
     def render_dialplan
-      dest = params[:destination_number].to_s.gsub(/\A\+/, "")
-      did  = Did.find_by(number: "+#{dest}") || Did.find_by(number: dest)
+      dest = (params[:destination_number] ||
+              params["Caller-Destination-Number"] ||
+              params["Hunt-Destination-Number"]).to_s.gsub(/\A\+/, "")
+      did  = Did.find_by(number: "+#{dest}") ||
+             Did.find_by(number: dest) ||
+             Did.find_by(gateway_user: dest)
 
       unless did&.status == "active"
         return render_not_found
       end
 
-      agent_url = AGENT_WS_URL
-      number    = did.number
+      number = did.number
 
       xml = <<~XML
         <?xml version="1.0" encoding="UTF-8" standalone="no"?>
@@ -61,11 +63,9 @@ module Internal
             <context name="public">
               <extension name="inbound-#{did.fs_gateway_name}">
                 <condition field="destination_number" expression="^\\+?#{dest}$">
-                  <action application="answer"/>
                   <action application="set" data="call_did=#{number}"/>
-                  <action application="uuid_audio_stream"
-                          data="#{agent_url}/ws/${uuid}?did=#{number} mono 48000"/>
-                  <action application="sleep" data="3600000"/>
+                  <action application="answer"/>
+                  <action application="park"/>
                 </condition>
               </extension>
             </context>
@@ -125,7 +125,7 @@ module Internal
       gateways = Did.where(gateway_type: "sip_registration", status: "active")
 
       gateway_xml = gateways.map do |did|
-        realm = did.gateway_realm.presence || did.gateway_host
+        realm = did.gateway_realm
         port  = did.gateway_port || 5060
         <<~GATEWAY
           <gateway name="#{did.fs_gateway_name}">
@@ -134,12 +134,14 @@ module Internal
             <param name="proxy"               value="#{did.gateway_host}:#{port}"/>
             <param name="realm"               value="#{realm}"/>
             <param name="register"            value="true"/>
+            <param name="from-user"           value="#{did.gateway_user}"/>
+            <param name="from-domain"         value="#{did.gateway_host}"/>
             <param name="caller-id-in-from"   value="false"/>
             <param name="context"             value="public"/>
           </gateway>
         GATEWAY
       end.join
-
+      logger.debug "Generating sofia.conf with #{gateways.count} gateways:\n#{gateway_xml}"
       xml = <<~XML
         <?xml version="1.0" encoding="UTF-8" standalone="no"?>
         <document type="freeswitch/xml">
@@ -244,7 +246,9 @@ module Internal
       duration  = cdr.at("variables/duration")&.text.to_i
 
       number = dest.start_with?("+") ? dest : "+#{dest}"
-      did = Did.find_by(number: number) || Did.find_by(number: dest)
+      did = Did.find_by(number: number) ||
+            Did.find_by(number: dest) ||
+            Did.find_by(gateway_user: dest)
       return unless did
 
       CallLog.create!(

@@ -3,6 +3,7 @@
     <binding name="receptify">
       <param name="gateway-url" value="http://receptify-api/internal/freeswitch/xml"/>
       <param name="bindings" value="configuration|dialplan|directory"/>
+      <param name="disable-binding-cache" value="true"/>
     </binding>
   </bindings>
 </configuration>
