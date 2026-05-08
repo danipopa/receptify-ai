@@ -103,6 +103,8 @@ spec:
               value: https://api-m.paypal.com
             - name: ALLOWED_ORIGINS
               value: "https://app.receptify.us,https://www.receptify.us,https://receptify.us"
+            - name: ALLOWED_HOSTS
+              value: "receptify-api,192.168.244.209"
             - name: FS_BRIDGE_URL
               value: http://fs-bridge:9094
             - name: AGENT_WS_URL

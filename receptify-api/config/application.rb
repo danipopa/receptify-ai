@@ -41,11 +41,19 @@ module ReceptifyApi
     # Skip views, helpers and assets when generating a new resource.
     config.api_only = true
 
-    # Allow requests from service-name hostnames (Docker/k8s) and any hosts in ALLOWED_HOSTS env var.
+    private_network_hosts = [
+      /\A10(?:\.\d{1,3}){3}(:\d+)?\z/,
+      /\A172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2}(:\d+)?\z/,
+      /\A192\.168(?:\.\d{1,3}){2}(:\d+)?\z/
+    ]
+
+    # Allow requests from service-name hostnames (Docker/k8s), private cluster IPs,
+    # and any explicit hosts in ALLOWED_HOSTS.
     config.hosts = [
       "localhost",
       "127.0.0.1",
       /\Alocalhost(:\d+)?\z/,
+      *private_network_hosts,
       /.*\.receptify\.us/,
       *ENV.fetch("ALLOWED_HOSTS", "receptify-api").split(",").map { |h| /\A#{Regexp.escape(h.strip)}(:\d+)?\z/ }
     ]
