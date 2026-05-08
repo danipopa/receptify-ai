@@ -63,10 +63,11 @@ RUN sed -i \
     modules.conf
 
 # Ensure mod_xml_curl and mod_xml_cdr are enabled
-RUN sed -i \
-    -e 's|^#[[:space:]]*xml_int/mod_xml_curl|xml_int/mod_xml_curl|' \
-    -e 's|^#[[:space:]]*loggers/mod_xml_cdr|loggers/mod_xml_cdr|' \
-    modules.conf
+# RUN sed -i \
+#     -e 's|^#[[:space:]]*xml_int/mod_xml_curl|xml_int/mod_xml_curl|' \
+#     -e 's|^#[[:space:]]*loggers/mod_xml_cdr|loggers/mod_xml_cdr|' \
+#     modules.conf
+COPY modules.conf /usr/src/freeswitch/modules.conf
 
 RUN ./configure \
     --prefix=/usr/local/freeswitch \
