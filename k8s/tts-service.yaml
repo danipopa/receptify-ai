@@ -30,6 +30,10 @@ spec:
               value: /opt/piper/en_US-lessac-medium.onnx
             - name: OUTPUT_SAMPLE_RATE
               value: "8000"
+            - name: TTS_MAX_WORKERS
+              value: "1"
+            - name: TTS_CACHE_ITEMS
+              value: "64"
             - name: LOG_LEVEL
               value: INFO
           readinessProbe:

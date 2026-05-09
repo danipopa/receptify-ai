@@ -87,7 +87,7 @@ class JsonFormatter(logging.Formatter):
             "msg":     record.getMessage(),
             "service": "agent",
         }
-        for k in ("call_uuid", "frame", "rms", "dur"):
+        for k in ("call_uuid", "frame", "rms", "dur", "stage", "elapsed_ms"):
             if hasattr(record, k):
                 doc[k] = getattr(record, k)
         if record.exc_info:
@@ -270,14 +270,24 @@ async def process_audio(
         ts = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S-%f")
         save_wav(pcm, f"input-{ts}.wav")
 
+    step_start = time.monotonic()
     text = await stt_transcribe(session, pcm)
+    log.info(
+        "Pipeline stage complete",
+        extra={"call_uuid": call_uuid, "stage": "stt", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
+    )
     if not text:
         log.info("STT returned empty text", extra={"call_uuid": call_uuid})
         return 0.0
 
     log.info("Caller said: %s", text, extra={"call_uuid": call_uuid})
 
+    step_start = time.monotonic()
     context = await rag_query(session, text, tenant_id=tenant_id, top_k=top_k)
+    log.info(
+        "Pipeline stage complete",
+        extra={"call_uuid": call_uuid, "stage": "rag_query", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
+    )
 
     # Build prompt
     prompt_context = context or "No specific context available."
@@ -295,13 +305,23 @@ async def process_audio(
     )
 
     # Ask LLM via RAG service /generate endpoint (ollama passthrough)
+    step_start = time.monotonic()
     reply = await llm_generate(session, prompt)
+    log.info(
+        "Pipeline stage complete",
+        extra={"call_uuid": call_uuid, "stage": "llm_generate", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
+    )
     if not reply:
         reply = "Sorry, I do not have that information."
 
     log.info("AI reply: %s", reply, extra={"call_uuid": call_uuid})
 
+    step_start = time.monotonic()
     wav_bytes = await tts_synthesize(session, reply)
+    log.info(
+        "Pipeline stage complete",
+        extra={"call_uuid": call_uuid, "stage": "tts", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
+    )
     if not wav_bytes:
         log.warning("TTS produced no audio", extra={"call_uuid": call_uuid})
         return 0.0
@@ -313,7 +333,12 @@ async def process_audio(
         log.info("Call UUID gone: %s", call_uuid, extra={"call_uuid": call_uuid})
         return 0.0
 
+    step_start = time.monotonic()
     tts_dur = await fs_broadcast(session, call_uuid, wav_bytes)
+    log.info(
+        "Pipeline stage complete",
+        extra={"call_uuid": call_uuid, "stage": "fs_broadcast", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
+    )
     log.info("Broadcast done, duration=%.2fs", tts_dur, extra={"call_uuid": call_uuid})
     return tts_dur
 
