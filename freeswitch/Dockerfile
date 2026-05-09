@@ -53,20 +53,6 @@ RUN git checkout ${FS_VERSION}
 
 RUN ./bootstrap.sh -j
 
-# Disable modules not needed for AI receptionist / problematic deps
-RUN sed -i \
-    -e 's|^[#[:space:]]*applications/mod_signalwire|#applications/mod_signalwire|' \
-    -e 's|^[#[:space:]]*applications/mod_av|#applications/mod_av|' \
-    -e 's|^[#[:space:]]*applications/mod_spandsp|#applications/mod_spandsp|' \
-    -e 's|^[#[:space:]]*applications/mod_fax|#applications/mod_fax|' \
-    -e 's|^[#[:space:]]*endpoints/mod_verto|#endpoints/mod_verto|' \
-    modules.conf
-
-# Ensure mod_xml_curl and mod_xml_cdr are enabled
-# RUN sed -i \
-#     -e 's|^#[[:space:]]*xml_int/mod_xml_curl|xml_int/mod_xml_curl|' \
-#     -e 's|^#[[:space:]]*loggers/mod_xml_cdr|loggers/mod_xml_cdr|' \
-#     modules.conf
 COPY modules.conf /usr/src/freeswitch/modules.conf
 
 RUN ./configure \
