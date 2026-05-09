@@ -51,6 +51,8 @@ spec:
               value: /tmp/fs-bridge-wav
             - name: LOG_LEVEL
               value: INFO
+            - name: AGENT_WS_URL
+              value: ws://agent-ws:9090
           volumeMounts:
             - name: wav
               mountPath: /tmp/fs-bridge-wav
