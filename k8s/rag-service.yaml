@@ -61,8 +61,10 @@ spec:
               value: ollama:11434
             - name: OLLAMA_TIMEOUT
               value: "60"
+            - name: RAG_TOP_K
+              value: "4"
             - name: LLM_NUM_PREDICT
-              value: "48"
+              value: "32"
             - name: LLM_TEMPERATURE
               value: "0.1"
             - name: LOG_LEVEL

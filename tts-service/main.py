@@ -11,14 +11,16 @@ Environment variables:
   PIPER_MODEL        /opt/piper/en_US-lessac-medium.onnx
   OUTPUT_SAMPLE_RATE 8000
   PIPER_TIMEOUT      10
+  TTS_MAX_WORKERS    1
+  TTS_CACHE_ITEMS    64
   HOST               0.0.0.0
   PORT               9093
   LOG_LEVEL          INFO
 """
 
 import asyncio
+import collections
 import datetime
-import io
 import json
 import logging
 import os
@@ -38,6 +40,8 @@ PIPER_BIN          = os.getenv("PIPER_BIN",    "/usr/local/bin/piper")
 PIPER_MODEL        = os.getenv("PIPER_MODEL",  "/opt/piper/en_US-lessac-medium.onnx")
 OUTPUT_SAMPLE_RATE = int(os.getenv("OUTPUT_SAMPLE_RATE", "8000"))
 PIPER_TIMEOUT      = int(os.getenv("PIPER_TIMEOUT", "10"))
+TTS_MAX_WORKERS    = int(os.getenv("TTS_MAX_WORKERS", "1"))
+TTS_CACHE_ITEMS    = int(os.getenv("TTS_CACHE_ITEMS", "64"))
 HOST               = os.getenv("HOST", "0.0.0.0")
 PORT               = int(os.getenv("PORT", "9093"))
 LOG_LEVEL          = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -63,7 +67,8 @@ logging.root.setLevel(LOG_LEVEL)
 logging.root.handlers = [_h]
 log = logging.getLogger("tts")
 
-executor = ThreadPoolExecutor(max_workers=2)
+executor = ThreadPoolExecutor(max_workers=TTS_MAX_WORKERS)
+tts_cache: collections.OrderedDict[tuple[str, int], bytes] = collections.OrderedDict()
 
 # ---------------------------------------------------------------------------
 # TTS helpers
@@ -136,10 +141,22 @@ async def synthesize(request: web.Request) -> web.Response:
         if not text:
             return web.json_response({"error": "text is required"}, status=400)
 
+        cache_key = (text, out_rate)
+        cached = tts_cache.get(cache_key)
+        if cached is not None:
+            tts_cache.move_to_end(cache_key)
+            log.info("TTS cache hit: %r @ %dHz", text, out_rate)
+            return web.Response(body=cached, content_type="audio/wav")
+
         log.info("Synthesizing: %r @ %dHz", text, out_rate)
 
         loop = asyncio.get_event_loop()
         wav_bytes = await loop.run_in_executor(executor, _synthesize, text, out_rate)
+
+        tts_cache[cache_key] = wav_bytes
+        tts_cache.move_to_end(cache_key)
+        while len(tts_cache) > TTS_CACHE_ITEMS:
+            tts_cache.popitem(last=False)
 
         return web.Response(body=wav_bytes, content_type="audio/wav")
 
