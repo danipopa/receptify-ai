@@ -52,7 +52,7 @@ RAG_URL       = os.getenv("RAG_URL",       "http://rag-service:9091")
 TTS_URL       = os.getenv("TTS_URL",       "http://tts-service:9093")
 FS_BRIDGE_URL  = os.getenv("FS_BRIDGE_URL",  "http://fs-bridge:9094")
 API_URL        = os.getenv("API_URL",        "http://receptify-api")
-INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "")
+INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "").strip()
 
 RECORDING_DIR     = os.getenv("RECORDING_DIR",     "/tmp/recordings")
 RECORDING_ENABLED = os.getenv("RECORDING_ENABLED", "false").lower() == "true"
@@ -209,6 +209,8 @@ async def tts_synthesize(session: aiohttp.ClientSession, text: str) -> bytes | N
         ) as r:
             if r.status == 200:
                 return await r.read()
+            body = await r.text()
+            log.warning("TTS service status=%d body=%s", r.status, body[:500])
     except Exception as e:
         log.warning("TTS service error: %s", e)
     return None

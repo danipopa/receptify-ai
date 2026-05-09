@@ -6,13 +6,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && command -v piper
 
 # Download Piper voice model (baked into image — no volume needed)
 ARG PIPER_MODEL_URL=https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
 RUN mkdir -p /opt/piper \
     && wget -q -O /opt/piper/en_US-lessac-medium.onnx       "$PIPER_MODEL_URL" \
-    && wget -q -O /opt/piper/en_US-lessac-medium.onnx.json  "${PIPER_MODEL_URL}.json"
+    && wget -q -O /opt/piper/en_US-lessac-medium.onnx.json  "${PIPER_MODEL_URL}.json" \
+    && mkdir -p /piper \
+    && ln -sf "$(command -v piper)" /piper/piper \
+    && ln -sf /opt/piper/en_US-lessac-medium.onnx /piper/en_US-lessac-medium.onnx \
+    && ln -sf /opt/piper/en_US-lessac-medium.onnx.json /piper/en_US-lessac-medium.onnx.json
 
 COPY main.py .
 

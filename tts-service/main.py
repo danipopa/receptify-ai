@@ -7,8 +7,8 @@ GET  /health
 GET  /ready
 
 Environment variables:
-  PIPER_BIN          /opt/receptify-ai/.venv/bin/piper
-  PIPER_MODEL        /opt/receptify-ai/piper/en_US-lessac-medium.onnx
+  PIPER_BIN          /usr/local/bin/piper
+  PIPER_MODEL        /opt/piper/en_US-lessac-medium.onnx
   OUTPUT_SAMPLE_RATE 8000
   PIPER_TIMEOUT      10
   HOST               0.0.0.0
@@ -34,8 +34,8 @@ from aiohttp import web
 # Config
 # ---------------------------------------------------------------------------
 
-PIPER_BIN          = os.getenv("PIPER_BIN",    "/opt/receptify-ai/.venv/bin/piper")
-PIPER_MODEL        = os.getenv("PIPER_MODEL",  "/opt/receptify-ai/piper/en_US-lessac-medium.onnx")
+PIPER_BIN          = os.getenv("PIPER_BIN",    "/usr/local/bin/piper")
+PIPER_MODEL        = os.getenv("PIPER_MODEL",  "/opt/piper/en_US-lessac-medium.onnx")
 OUTPUT_SAMPLE_RATE = int(os.getenv("OUTPUT_SAMPLE_RATE", "8000"))
 PIPER_TIMEOUT      = int(os.getenv("PIPER_TIMEOUT", "10"))
 HOST               = os.getenv("HOST", "0.0.0.0")

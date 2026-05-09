@@ -1,17 +1,3 @@
----
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: piper-pv
-spec:
-  capacity:
-    storage: 2Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  hostPath:
-    path: /home/storage/ns/receptify/piper
----
 # tts-service Deployment
 apiVersion: apps/v1
 kind: Deployment
@@ -39,16 +25,13 @@ spec:
             - containerPort: 9093
           env:
             - name: PIPER_BIN
-              value: /piper/piper
+              value: /usr/local/bin/piper
             - name: PIPER_MODEL
-              value: /piper/en_US-lessac-medium.onnx
+              value: /opt/piper/en_US-lessac-medium.onnx
             - name: OUTPUT_SAMPLE_RATE
               value: "8000"
             - name: LOG_LEVEL
               value: INFO
-          volumeMounts:
-            - name: piper-model
-              mountPath: /piper
           readinessProbe:
             httpGet:
               path: /ready
@@ -68,10 +51,6 @@ spec:
             limits:
               cpu: "1000m"
               memory: "512Mi"
-      volumes:
-        - name: piper-model
-          persistentVolumeClaim:
-            claimName: piper-model-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -84,17 +63,3 @@ spec:
   ports:
     - port: 9093
       targetPort: 9093
----
-# PVC for Piper binary + model (ReadOnlyMany or ReadWriteOnce)
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: piper-model-pvc
-  namespace: receptify
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 2Gi
-  volumeName: piper-pv

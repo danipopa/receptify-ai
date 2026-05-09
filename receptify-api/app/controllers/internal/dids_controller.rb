@@ -71,9 +71,9 @@ module Internal
     private
 
     def authenticate_internal!
-      token = ENV.fetch("INTERNAL_TOKEN", nil)
+      token = ENV.fetch("INTERNAL_TOKEN", nil)&.strip
       return if token.blank?
-      unless request.headers["X-Internal-Token"] == token
+      unless request.headers["X-Internal-Token"].to_s.strip == token
         head :unauthorized
       end
     end

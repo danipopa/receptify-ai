@@ -1,14 +1,14 @@
 ---
-# fs-bridge DaemonSet — runs on every node where FreeSWITCH runs
-# Uses hostNetwork so it can reach FreeSWITCH ESL on 127.0.0.1:8021
+# fs-bridge Deployment — talks to FreeSWITCH ESL through the freeswitch Service.
 apiVersion: apps/v1
-kind: DaemonSet
+kind: Deployment
 metadata:
   name: fs-bridge
   namespace: receptify
   labels:
     app: fs-bridge
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app: fs-bridge
@@ -19,23 +19,15 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-secret
-      hostNetwork: true
-      tolerations:
-        - key: freeswitch
-          operator: Exists
-          effect: NoSchedule
-      nodeSelector:
-        freeswitch: "true"
       containers:
         - name: fs-bridge
           image: ghcr.io/danipopa/fs-bridge:latest
           command: ["python3", "main.py"]
           ports:
             - containerPort: 9094
-              hostPort: 9094
           env:
             - name: FS_HOST
-              value: "127.0.0.1"
+              value: "freeswitch"
             - name: FS_PORT
               value: "8021"
             - name: FS_PASSWORD
@@ -52,7 +44,7 @@ spec:
             - name: LOG_LEVEL
               value: INFO
             - name: AGENT_WS_URL
-              value: ws://agent-ws:9090
+              value: "ws://agent-ws:9090"
           volumeMounts:
             - name: wav
               mountPath: /tmp/fs-bridge-wav
@@ -60,14 +52,12 @@ spec:
             httpGet:
               path: /ready
               port: 9094
-              host: 127.0.0.1
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /health
               port: 9094
-              host: 127.0.0.1
             initialDelaySeconds: 10
             periodSeconds: 15
           resources:
