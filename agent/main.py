@@ -324,7 +324,7 @@ async def llm_generate(session: aiohttp.ClientSession, prompt: str) -> str:
         async with session.post(
             f"{RAG_URL}/generate",
             json={"prompt": prompt},
-            timeout=aiohttp.ClientTimeout(total=25),
+            timeout=aiohttp.ClientTimeout(total=60),
         ) as r:
             data = await r.json()
             return data.get("reply", "")

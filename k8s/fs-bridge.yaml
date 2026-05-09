@@ -19,6 +19,8 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-secret
+      nodeSelector:
+        freeswitch: "true"
       containers:
         - name: fs-bridge
           image: ghcr.io/danipopa/fs-bridge:latest
@@ -69,7 +71,9 @@ spec:
               memory: "128Mi"
       volumes:
         - name: wav
-          emptyDir: {}
+          hostPath:
+            path: /home/storage/ns/receptify/fs-bridge-wav
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service

@@ -59,6 +59,12 @@ spec:
               value: llama3.2:1b
             - name: OLLAMA_HOST
               value: ollama:11434
+            - name: OLLAMA_TIMEOUT
+              value: "60"
+            - name: LLM_NUM_PREDICT
+              value: "48"
+            - name: LLM_TEMPERATURE
+              value: "0.1"
             - name: LOG_LEVEL
               value: INFO
           volumeMounts:

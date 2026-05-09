@@ -55,7 +55,12 @@ else
 fi
 
 echo "==> [4/6] Creating storage directory on host..."
-mkdir -p /home/storage/ns/receptify/postgresql
+mkdir -p \
+  /home/storage/ns/receptify/postgresql \
+  /home/storage/ns/receptify/freeswitch/conf \
+  /home/storage/ns/receptify/fs-bridge-wav \
+  /home/storage/ns/receptify/rag \
+  /home/storage/ns/receptify/ollama
 
 echo "==> [5/6] Deploying PostgreSQL..."
 kubectl apply -f "$SCRIPT_DIR/postgres.yaml"
@@ -68,6 +73,7 @@ kubectl apply -f "$SCRIPT_DIR/receptify-api.yaml"
 kubectl apply -f "$SCRIPT_DIR/receptify-frontend.yaml"
 kubectl apply -f "$SCRIPT_DIR/agent.yaml"
 kubectl apply -f "$SCRIPT_DIR/fs-bridge.yaml"
+kubectl apply -f "$SCRIPT_DIR/ollama.yaml"
 kubectl apply -f "$SCRIPT_DIR/rag-service.yaml"
 kubectl apply -f "$SCRIPT_DIR/stt-service.yaml"
 kubectl apply -f "$SCRIPT_DIR/tts-service.yaml"

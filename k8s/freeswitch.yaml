@@ -99,6 +99,8 @@ spec:
           volumeMounts:
             - name: fs-config
               mountPath: /usr/local/freeswitch/etc/freeswitch
+            - name: fs-bridge-wav
+              mountPath: /tmp/fs-bridge-wav
           livenessProbe:
             tcpSocket:
               port: 5060
@@ -120,6 +122,10 @@ spec:
         - name: fs-config
           persistentVolumeClaim:
             claimName: freeswitch-pvc
+        - name: fs-bridge-wav
+          hostPath:
+            path: /home/storage/ns/receptify/fs-bridge-wav
+            type: DirectoryOrCreate
 ---
 # Headless service for StatefulSet DNS
 apiVersion: v1

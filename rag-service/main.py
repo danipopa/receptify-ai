@@ -47,6 +47,8 @@ OLLAMA_HOST     = os.getenv("OLLAMA_HOST",     "127.0.0.1:11434")
 RAG_CHUNK_WORDS = int(os.getenv("RAG_CHUNK_WORDS", "30"))
 RAG_TOP_K       = int(os.getenv("RAG_TOP_K",       "4"))
 OLLAMA_TIMEOUT  = int(os.getenv("OLLAMA_TIMEOUT",  "20"))
+LLM_NUM_PREDICT = int(os.getenv("LLM_NUM_PREDICT", "48"))
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 HOST            = os.getenv("HOST",  "0.0.0.0")
 PORT            = int(os.getenv("PORT", "9091"))
 LOG_LEVEL       = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -220,7 +222,15 @@ class RagStore:
         try:
             r = self._ollama_post(
                 "/api/generate",
-                {"model": LLM_MODEL, "prompt": prompt, "stream": False},
+                {
+                    "model": LLM_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "num_predict": LLM_NUM_PREDICT,
+                        "temperature": LLM_TEMPERATURE,
+                    },
+                },
                 timeout=OLLAMA_TIMEOUT,
             )
             raw = r.get("response", "")
