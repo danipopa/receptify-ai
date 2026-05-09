@@ -13,6 +13,8 @@ Environment variables (all optional, sensible defaults shown):
   RAG_URL            http://rag-service:9091
   TTS_URL            http://tts-service:9093
   FS_BRIDGE_URL      http://fs-bridge:9094
+  AUDIO_PLAYBACK_MODE fs_bridge   fs_bridge|mod_audio_stream
+  MOD_AUDIO_STREAM_PROBE_TEXT     optional text played once over websocket on connect
   RECORDING_DIR      /tmp/recordings
   RECORDING_ENABLED  false
   MUTE_BUFFER_SEC    0.5
@@ -25,7 +27,9 @@ Environment variables (all optional, sensible defaults shown):
 """
 
 import asyncio
+import base64
 import datetime
+import io
 import json
 import logging
 import os
@@ -53,6 +57,9 @@ TTS_URL       = os.getenv("TTS_URL",       "http://tts-service:9093")
 FS_BRIDGE_URL  = os.getenv("FS_BRIDGE_URL",  "http://fs-bridge:9094")
 API_URL        = os.getenv("API_URL",        "http://receptify-api")
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "").strip()
+AUDIO_PLAYBACK_MODE = os.getenv("AUDIO_PLAYBACK_MODE", "fs_bridge").strip().lower()
+MOD_AUDIO_STREAM_PROBE_TEXT = os.getenv("MOD_AUDIO_STREAM_PROBE_TEXT", "").strip()
+MOD_AUDIO_STREAM_PROBE_DELAY = float(os.getenv("MOD_AUDIO_STREAM_PROBE_DELAY", "1.2"))
 
 RECORDING_DIR     = os.getenv("RECORDING_DIR",     "/tmp/recordings")
 RECORDING_ENABLED = os.getenv("RECORDING_ENABLED", "false").lower() == "true"
@@ -156,6 +163,14 @@ def save_wav(audio_bytes: bytes, name: str) -> str:
     return path
 
 
+def wav_duration(wav_bytes: bytes) -> float:
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as f:
+            return f.getnframes() / float(f.getframerate())
+    except Exception:
+        return 3.0
+
+
 def rms(audio_bytes: bytes) -> float:
     arr = np.frombuffer(audio_bytes, dtype="<i2").astype(np.float32) / 32768.0
     return float(np.sqrt(np.mean(arr ** 2))) if len(arr) else 0.0
@@ -232,6 +247,20 @@ async def fs_broadcast(session: aiohttp.ClientSession, call_uuid: str, wav_bytes
     return 0.0
 
 
+async def mod_audio_stream_playback(websocket, wav_bytes: bytes) -> float:
+    """Ask mod_audio_stream to play audio sent back over the same websocket."""
+    payload = {
+        "type": "streamAudio",
+        "data": {
+            "audioDataType": "wav",
+            "sampleRate": SAMPLE_RATE,
+            "audioData": base64.b64encode(wav_bytes).decode("ascii"),
+        },
+    }
+    await websocket.send(json.dumps(payload))
+    return wav_duration(wav_bytes)
+
+
 async def fs_uuid_exists(session: aiohttp.ClientSession, call_uuid: str) -> bool:
     try:
         async with session.get(
@@ -250,6 +279,7 @@ async def fs_uuid_exists(session: aiohttp.ClientSession, call_uuid: str) -> bool
 
 async def process_audio(
     session: aiohttp.ClientSession,
+    websocket,
     pcm: bytes,
     call_uuid: str | None,
     call_config: dict | None = None,
@@ -326,6 +356,16 @@ async def process_audio(
         log.warning("TTS produced no audio", extra={"call_uuid": call_uuid})
         return 0.0
 
+    if AUDIO_PLAYBACK_MODE == "mod_audio_stream":
+        step_start = time.monotonic()
+        tts_dur = await mod_audio_stream_playback(websocket, wav_bytes)
+        log.info(
+            "Pipeline stage complete",
+            extra={"call_uuid": call_uuid, "stage": "mod_audio_stream_playback", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
+        )
+        log.info("mod_audio_stream playback sent, duration=%.2fs", tts_dur, extra={"call_uuid": call_uuid})
+        return tts_dur
+
     if not call_uuid:
         return 0.0
 
@@ -396,13 +436,26 @@ async def handler(websocket):
 
         welcome = call_config.get("welcome_message") or WELCOME_MESSAGE
 
+        if MOD_AUDIO_STREAM_PROBE_TEXT:
+            await asyncio.sleep(MOD_AUDIO_STREAM_PROBE_DELAY)
+            log.info("Sending mod_audio_stream probe", extra={"call_uuid": call_uuid})
+            wav = await tts_synthesize(session, MOD_AUDIO_STREAM_PROBE_TEXT)
+            if wav:
+                tts_dur = await mod_audio_stream_playback(websocket, wav)
+                muted_until = time.monotonic() + tts_dur + MUTE_BUFFER_SEC
+            else:
+                log.warning("mod_audio_stream probe TTS failed", extra={"call_uuid": call_uuid})
+
         # Play welcome message on call connect
-        if call_uuid and welcome:
+        if call_uuid and welcome and not MOD_AUDIO_STREAM_PROBE_TEXT:
             await asyncio.sleep(0.8)   # let FreeSWITCH finish call setup
             log.info("Sending welcome message", extra={"call_uuid": call_uuid})
             wav = await tts_synthesize(session, welcome)
             if wav:
-                tts_dur = await fs_broadcast(session, call_uuid, wav)
+                if AUDIO_PLAYBACK_MODE == "mod_audio_stream":
+                    tts_dur = await mod_audio_stream_playback(websocket, wav)
+                else:
+                    tts_dur = await fs_broadcast(session, call_uuid, wav)
                 muted_until = time.monotonic() + tts_dur + MUTE_BUFFER_SEC
             else:
                 log.warning("Welcome TTS failed", extra={"call_uuid": call_uuid})
@@ -483,7 +536,7 @@ async def handler(websocket):
                                  extra={"call_uuid": call_uuid})
 
                         try:
-                            tts_dur = await process_audio(session, captured, call_uuid, call_config)
+                            tts_dur = await process_audio(session, websocket, captured, call_uuid, call_config)
                             if tts_dur > 0:
                                 muted_until = time.monotonic() + tts_dur + MUTE_BUFFER_SEC
                         finally:
