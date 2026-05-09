@@ -1,6 +1,6 @@
 <configuration name="xml_cdr.conf" description="XML CDR">
   <settings>
-    <param name="url" value="http://receptify-api/internal/freeswitch/cdr"/>
+    <param name="url" value="http://receptify-api:3000/internal/freeswitch/cdr"/>
     <param name="retries" value="2"/>
     <param name="delay" value="5000"/>
     <param name="method" value="POST"/>

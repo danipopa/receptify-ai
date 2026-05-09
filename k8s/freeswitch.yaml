@@ -98,7 +98,7 @@ spec:
               protocol: TCP
           volumeMounts:
             - name: fs-config
-              mountPath: /usr/local/freeswitch/conf
+              mountPath: /usr/local/freeswitch/etc/freeswitch
           livenessProbe:
             tcpSocket:
               port: 5060
