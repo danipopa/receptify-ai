@@ -76,6 +76,8 @@ spec:
               value: "24h"
             - name: OLLAMA_MAX_LOADED_MODELS
               value: "2"
+            - name: OLLAMA_NUM_PARALLEL
+              value: "1"
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama
@@ -93,11 +95,10 @@ spec:
             periodSeconds: 20
           resources:
             requests:
-              cpu: "500m"
-              memory: "6Gi"
+              cpu: "2"
+              memory: "2Gi"
             limits:
-              cpu: "4000m"
-              memory: "12Gi"
+              memory: "8Gi"
       volumes:
         - name: ollama-data
           persistentVolumeClaim:
