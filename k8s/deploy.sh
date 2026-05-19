@@ -54,13 +54,15 @@ else
     --from-literal=esl-password="${FS_ESL_PASSWORD:-R3c3pt1fy#ESL@xP9kZm2X}"
 fi
 
-echo "==> [4/6] Creating storage directory on host..."
-mkdir -p \
-  /home/storage/ns/receptify/postgresql \
-  /home/storage/ns/receptify/freeswitch/conf \
-  /home/storage/ns/receptify/fs-bridge-wav \
-  /home/storage/ns/receptify/rag \
-  /home/storage/ns/receptify/ollama
+EXTERNAL_SERVICES_FILE="${EXTERNAL_SERVICES_FILE:-$SCRIPT_DIR/external-services.local.yaml}"
+if [[ ! -f "$EXTERNAL_SERVICES_FILE" ]]; then
+  echo "ERROR: Missing $EXTERNAL_SERVICES_FILE" >&2
+  echo "Create it from k8s/external-services.example.yaml and set RAG_URL to the Azure ragBaseUrl output." >&2
+  exit 1
+fi
+
+echo "==> [4/6] Applying external service endpoints..."
+kubectl apply -f "$EXTERNAL_SERVICES_FILE"
 
 echo "==> [5/6] Deploying PostgreSQL..."
 kubectl apply -f "$SCRIPT_DIR/postgres.yaml"
@@ -73,8 +75,7 @@ kubectl apply -f "$SCRIPT_DIR/receptify-api.yaml"
 kubectl apply -f "$SCRIPT_DIR/receptify-frontend.yaml"
 kubectl apply -f "$SCRIPT_DIR/agent.yaml"
 kubectl apply -f "$SCRIPT_DIR/fs-bridge.yaml"
-kubectl apply -f "$SCRIPT_DIR/ollama.yaml"
-kubectl apply -f "$SCRIPT_DIR/rag-service.yaml"
+kubectl apply -f "$SCRIPT_DIR/freeswitch.yaml"
 kubectl apply -f "$SCRIPT_DIR/stt-service.yaml"
 kubectl apply -f "$SCRIPT_DIR/tts-service.yaml"
 

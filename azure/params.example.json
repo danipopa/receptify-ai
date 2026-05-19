@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "eastus2"
+    },
+    "prefix": {
+      "value": "receptify"
+    },
+    "ollamaImageTag": {
+      "value": "latest"
+    },
+    "ragImage": {
+      "value": "ghcr.io/danipopa/rag-service:latest"
+    },
+    "allowedSourceCidr": {
+      "value": "YOUR_SERVER_PUBLIC_IP/32"
+    },
+    "ragOutboundSourceCidr": {
+      "value": ""
+    },
+    "ollamaStorageQuotaGiB": {
+      "value": 20
+    },
+    "ragStorageQuotaGiB": {
+      "value": 5
+    },
+    "ollamaCpu": {
+      "value": "2.0"
+    },
+    "ollamaMemory": {
+      "value": "4.0Gi"
+    },
+    "ragCpu": {
+      "value": "0.5"
+    },
+    "ragMemory": {
+      "value": "1.0Gi"
+    },
+    "minReplicas": {
+      "value": 1
+    },
+    "maxReplicas": {
+      "value": 1
+    }
+  }
+}

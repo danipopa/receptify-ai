@@ -37,7 +37,10 @@ spec:
             - name: STT_URL
               value: http://stt-service:9092
             - name: RAG_URL
-              value: http://rag-service:9091
+              valueFrom:
+                configMapKeyRef:
+                  name: receptify-external-services
+                  key: RAG_URL
             - name: TTS_URL
               value: http://tts-service:9093
             - name: FS_BRIDGE_URL
@@ -51,6 +54,10 @@ spec:
                   key: INTERNAL_TOKEN
             - name: RECORDING_ENABLED
               value: "false"
+            - name: SILENCE_MS
+              value: "400"
+            - name: MUTE_BUFFER_SEC
+              value: "0.25"
             - name: LOG_LEVEL
               value: INFO
           readinessProbe:
