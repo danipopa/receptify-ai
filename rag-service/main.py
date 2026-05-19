@@ -15,7 +15,7 @@ Environment variables:
   FAQ_FILE          /opt/ai-ivr-context.txt
   EMBEDDING_MODEL   nomic-embed-text
   LLM_MODEL         llama3.2:1b
-  OLLAMA_HOST       127.0.0.1:11434
+  OLLAMA_HOST       127.0.0.1:11434 or https://ollama.example.com
   RAG_CHUNK_WORDS   60
   RAG_TOP_K         3
   OLLAMA_TIMEOUT    20
@@ -55,6 +55,7 @@ LOG_LEVEL       = os.getenv("LOG_LEVEL", "INFO").upper()
 
 os.environ.setdefault("HOME", "/root")
 os.environ["OLLAMA_HOST"] = OLLAMA_HOST
+OLLAMA_BASE_URL = OLLAMA_HOST if OLLAMA_HOST.startswith(("http://", "https://")) else f"http://{OLLAMA_HOST}"
 
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -106,7 +107,7 @@ class RagStore:
     def _ollama_post(self, path: str, payload: dict, timeout: int = 10) -> dict:
         data = json.dumps(payload).encode()
         req  = urllib.request.Request(
-            f"http://{OLLAMA_HOST}{path}",
+            f"{OLLAMA_BASE_URL}{path}",
             data=data,
             headers={"Content-Type": "application/json"},
         )
