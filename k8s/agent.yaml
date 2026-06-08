@@ -52,12 +52,16 @@ spec:
                 secretKeyRef:
                   name: receptify-api-secret
                   key: INTERNAL_TOKEN
+            - name: AUDIO_PLAYBACK_MODE
+              value: mod_audio_stream
             - name: RECORDING_ENABLED
               value: "false"
             - name: SILENCE_MS
               value: "400"
-            - name: MUTE_BUFFER_SEC
-              value: "0.25"
+            - name: BARGE_IN_MS
+              value: "220"
+            - name: TTS_CHUNK_CHARS
+              value: "120"
             - name: LOG_LEVEL
               value: INFO
           readinessProbe:

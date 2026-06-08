@@ -10,6 +10,7 @@ Endpoints:
   GET  /uuid/{uuid}/exists             → {"exists": true}
   POST /uuid/{uuid}/broadcast          body: WAV bytes (audio/wav)
                                        → {"status": "ok", "duration": 3.2}
+  POST /uuid/{uuid}/stop               → {"status": "ok"}
   POST /uuid/{uuid}/command            body: {"command": "..."}
                                        → {"output": "..."}
   POST /sync/reload                    → {"status": "ok"}
@@ -291,6 +292,12 @@ def broadcast_wav(call_uuid: str, wav_path: str) -> float:
     return get_wav_duration(wav_path)
 
 
+def stop_playback(call_uuid: str) -> str:
+    cmd = f"uuid_break {call_uuid} all"
+    log.info("Stop playback: %s", cmd)
+    return _fs_cmd(cmd, timeout=3)
+
+
 # ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
@@ -376,6 +383,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"output": output})
             except Exception as e:
                 log.exception("command error: %s", e)
+                self._send_json(500, {"error": str(e)})
+            return
+
+        if call_uuid and self.path.endswith("/stop"):
+            try:
+                self._read_body()  # drain
+                if not uuid_exists(call_uuid):
+                    self._send_json(404, {"error": "call uuid not found"})
+                    return
+                output = stop_playback(call_uuid)
+                self._send_json(200, {"status": "ok", "output": output})
+            except Exception as e:
+                log.exception("stop error: %s", e)
                 self._send_json(500, {"error": str(e)})
             return
 

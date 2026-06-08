@@ -17,8 +17,9 @@ Environment variables (all optional, sensible defaults shown):
   MOD_AUDIO_STREAM_PROBE_TEXT     optional text played once over websocket on connect
   RECORDING_DIR      /tmp/recordings
   RECORDING_ENABLED  false
-  MUTE_BUFFER_SEC    0.5
   WELCOME_MESSAGE    Thank you for calling. How can I help you today?
+  BARGE_IN_MS        220
+  TTS_CHUNK_CHARS    120
   SILENCE_MS         900
   MIN_SPEECH_SEC     0.8
   MAX_SPEECH_SEC     8.0
@@ -33,6 +34,7 @@ import io
 import json
 import logging
 import os
+import re
 import struct
 import time
 import wave
@@ -63,7 +65,8 @@ MOD_AUDIO_STREAM_PROBE_DELAY = float(os.getenv("MOD_AUDIO_STREAM_PROBE_DELAY", "
 
 RECORDING_DIR     = os.getenv("RECORDING_DIR",     "/tmp/recordings")
 RECORDING_ENABLED = os.getenv("RECORDING_ENABLED", "false").lower() == "true"
-MUTE_BUFFER_SEC   = float(os.getenv("MUTE_BUFFER_SEC", "0.5"))
+BARGE_IN_MS       = int(os.getenv("BARGE_IN_MS", "220"))
+TTS_CHUNK_CHARS   = int(os.getenv("TTS_CHUNK_CHARS", "120"))
 
 WELCOME_MESSAGE   = os.getenv(
     "WELCOME_MESSAGE",
@@ -87,6 +90,13 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 # ---------------------------------------------------------------------------
 
 class JsonFormatter(logging.Formatter):
+    _SKIP = frozenset({
+        "name", "msg", "args", "created", "filename", "funcName", "levelname",
+        "levelno", "lineno", "module", "msecs", "pathname", "process",
+        "processName", "relativeCreated", "stack_info", "thread", "threadName",
+        "exc_info", "exc_text", "message", "taskName",
+    })
+
     def format(self, record: logging.LogRecord) -> str:
         doc = {
             "ts":      datetime.datetime.utcnow().isoformat() + "Z",
@@ -94,9 +104,9 @@ class JsonFormatter(logging.Formatter):
             "msg":     record.getMessage(),
             "service": "agent",
         }
-        for k in ("call_uuid", "frame", "rms", "dur", "stage", "elapsed_ms"):
-            if hasattr(record, k):
-                doc[k] = getattr(record, k)
+        for k, v in record.__dict__.items():
+            if k not in self._SKIP and not k.startswith("_"):
+                doc[k] = v
         if record.exc_info:
             doc["exc"] = self.formatException(record.exc_info)
         return json.dumps(doc)
@@ -179,7 +189,7 @@ def rms(audio_bytes: bytes) -> float:
 # Downstream service clients
 # ---------------------------------------------------------------------------
 
-async def stt_transcribe(session: aiohttp.ClientSession, pcm: bytes) -> str:
+async def stt_transcribe(session: aiohttp.ClientSession, pcm: bytes) -> tuple[str, int]:
     try:
         form = aiohttp.FormData()
         form.add_field("audio", pcm, content_type="application/octet-stream",
@@ -187,10 +197,10 @@ async def stt_transcribe(session: aiohttp.ClientSession, pcm: bytes) -> str:
         form.add_field("sample_rate", str(SAMPLE_RATE))
         async with session.post(f"{STT_URL}/transcribe", data=form, timeout=aiohttp.ClientTimeout(total=15)) as r:
             data = await r.json()
-            return data.get("text", "")
+            return data.get("text", ""), int(data.get("inference_ms", 0))
     except Exception as e:
         log.warning("STT service error: %s", e)
-        return ""
+        return "", 0
 
 
 async def rag_query(
@@ -198,7 +208,7 @@ async def rag_query(
     text: str,
     tenant_id: int | None = None,
     top_k: int = 3,
-) -> str:
+) -> tuple[str, int]:
     try:
         payload: dict = {"text": text, "top_k": top_k}
         if tenant_id:
@@ -209,13 +219,13 @@ async def rag_query(
             timeout=aiohttp.ClientTimeout(total=5),
         ) as r:
             data = await r.json()
-            return data.get("context", "")
+            return data.get("context", ""), int(data.get("duration_ms", 0))
     except Exception as e:
         log.warning("RAG service error: %s", e)
-        return ""
+        return "", 0
 
 
-async def tts_synthesize(session: aiohttp.ClientSession, text: str) -> bytes | None:
+async def tts_synthesize(session: aiohttp.ClientSession, text: str) -> tuple[bytes | None, int]:
     try:
         async with session.post(
             f"{TTS_URL}/synthesize",
@@ -223,12 +233,13 @@ async def tts_synthesize(session: aiohttp.ClientSession, text: str) -> bytes | N
             timeout=aiohttp.ClientTimeout(total=12),
         ) as r:
             if r.status == 200:
-                return await r.read()
+                synthesis_ms = int(r.headers.get("X-Synthesis-Ms", 0))
+                return await r.read(), synthesis_ms
             body = await r.text()
             log.warning("TTS service status=%d body=%s", r.status, body[:500])
     except Exception as e:
         log.warning("TTS service error: %s", e)
-    return None
+    return None, 0
 
 
 async def fs_broadcast(session: aiohttp.ClientSession, call_uuid: str, wav_bytes: bytes) -> float:
@@ -247,6 +258,21 @@ async def fs_broadcast(session: aiohttp.ClientSession, call_uuid: str, wav_bytes
     return 0.0
 
 
+async def fs_stop_playback(session: aiohttp.ClientSession, call_uuid: str | None) -> None:
+    if not call_uuid:
+        return
+    try:
+        async with session.post(
+            f"{FS_BRIDGE_URL}/uuid/{call_uuid}/stop",
+            timeout=aiohttp.ClientTimeout(total=3),
+        ) as r:
+            if r.status not in (200, 404):
+                body = await r.text()
+                log.warning("fs-bridge stop status=%d body=%s", r.status, body[:500])
+    except Exception as e:
+        log.warning("fs-bridge stop error: %s", e)
+
+
 async def mod_audio_stream_playback(websocket, wav_bytes: bytes) -> float:
     """Ask mod_audio_stream to play audio sent back over the same websocket."""
     payload = {
@@ -259,6 +285,14 @@ async def mod_audio_stream_playback(websocket, wav_bytes: bytes) -> float:
     }
     await websocket.send(json.dumps(payload))
     return wav_duration(wav_bytes)
+
+
+async def mod_audio_stream_stop(websocket) -> None:
+    for payload in ({"type": "stopAudio"}, {"event": "stopAudio"}):
+        try:
+            await websocket.send(json.dumps(payload))
+        except Exception:
+            return
 
 
 async def fs_uuid_exists(session: aiohttp.ClientSession, call_uuid: str) -> bool:
@@ -277,11 +311,235 @@ async def fs_uuid_exists(session: aiohttp.ClientSession, call_uuid: str) -> bool
 # Core pipeline
 # ---------------------------------------------------------------------------
 
+class CallState:
+    def __init__(self) -> None:
+        self.generation = 0
+        self.response_task: asyncio.Task | None = None
+        self.playback_active = False
+        self.playback_task: asyncio.Task | None = None
+        # Conversation history: list of {"role": "user"|"assistant", "content": str}
+        self.history: list[dict] = []
+        # Tracks the current turn so interrupt_response can save partial context
+        self.pending_user_text: str = ""
+        self.pending_reply: str = ""
+
+    def next_generation(self) -> int:
+        self.generation += 1
+        return self.generation
+
+    def is_current(self, generation: int) -> bool:
+        return generation == self.generation
+
+
+def build_prompt(text: str, context: str, history: list[dict] | None = None) -> str:
+    prompt_context = context or "No specific context available."
+    history_section = ""
+    if history:
+        lines = []
+        for turn in history[-6:]:  # keep last 3 exchanges
+            role = "Caller" if turn["role"] == "user" else "Receptionist"
+            lines.append(f"{role}: {turn['content']}")
+        history_section = "Conversation so far:\n" + "\n".join(lines) + "\n\n"
+    return (
+        "You are a telephone receptionist. Answer the caller using ONLY the information in the context below.\n"
+        "Context:\n"
+        f"{prompt_context}\n\n"
+        + history_section
+        + "Instructions:\n"
+        "- Give a direct, short answer in one sentence (max 20 words).\n"
+        "- Use only facts from the context above.\n"
+        "- If the answer is clearly present in the context, state it.\n"
+        "- Only say 'Sorry, I do not have that information' if the topic is truly absent from the context.\n"
+        f"Caller: {text}\n"
+        "Answer:"
+    )
+
+
+def sentence_chunks(buffer: str, force: bool = False) -> tuple[list[str], str]:
+    chunks: list[str] = []
+    start = 0
+    for i, ch in enumerate(buffer):
+        if ch in ".!?" and (i + 1 == len(buffer) or buffer[i + 1].isspace()):
+            part = buffer[start : i + 1].strip()
+            if part:
+                chunks.append(part)
+            start = i + 1
+
+    remainder = buffer[start:].strip()
+    if force and remainder:
+        chunks.append(remainder)
+        remainder = ""
+    elif len(remainder) >= TTS_CHUNK_CHARS:
+        split_at = remainder.rfind(" ", 0, TTS_CHUNK_CHARS)
+        if split_at < 40:
+            split_at = TTS_CHUNK_CHARS
+        chunks.append(remainder[:split_at].strip())
+        remainder = remainder[split_at:].strip()
+
+    return chunks, remainder
+
+
+async def llm_generate_stream(session: aiohttp.ClientSession, prompt: str):
+    try:
+        async with session.post(
+            f"{RAG_URL}/generate_stream",
+            json={"prompt": prompt},
+            timeout=aiohttp.ClientTimeout(total=60, sock_read=15),
+        ) as r:
+            if r.status != 200:
+                body = await r.text()
+                log.warning("LLM stream status=%d body=%s", r.status, body[:500])
+                return
+            async for raw in r.content:
+                for line in raw.splitlines():
+                    if not line.strip():
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if item.get("error"):
+                        log.warning("LLM stream error: %s", item["error"])
+                        return
+                    token = item.get("token")
+                    if token:
+                        yield token
+                    if item.get("done"):
+                        return
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        log.warning("LLM stream error: %s", e)
+
+
+async def play_wav(
+    session: aiohttp.ClientSession,
+    websocket,
+    wav_bytes: bytes,
+    call_uuid: str | None,
+    state: CallState,
+    generation: int,
+) -> float:
+    if not state.is_current(generation):
+        return 0.0
+
+    if AUDIO_PLAYBACK_MODE == "mod_audio_stream":
+        dur = await mod_audio_stream_playback(websocket, wav_bytes)
+    else:
+        if not call_uuid or not await fs_uuid_exists(session, call_uuid):
+            return 0.0
+        dur = await fs_broadcast(session, call_uuid, wav_bytes)
+
+    if not state.is_current(generation):
+        return 0.0
+    state.playback_active = True
+    try:
+        await asyncio.sleep(dur)
+    finally:
+        if state.is_current(generation):
+            state.playback_active = False
+    return dur
+
+
+async def speak_text(
+    session: aiohttp.ClientSession,
+    websocket,
+    text: str,
+    call_uuid: str | None,
+    state: CallState,
+    generation: int,
+) -> float:
+    if not state.is_current(generation) or not text.strip():
+        return 0.0
+    wav_bytes, _synthesis_ms = await tts_synthesize(session, text)
+    if not wav_bytes:
+        log.warning("TTS produced no audio", extra={"call_uuid": call_uuid})
+        return 0.0
+    state.playback_task = asyncio.create_task(
+        play_wav(session, websocket, wav_bytes, call_uuid, state, generation)
+    )
+    try:
+        return await state.playback_task
+    finally:
+        if state.playback_task and state.playback_task.done():
+            state.playback_task = None
+
+
+async def speak_queue_worker(
+    session: aiohttp.ClientSession,
+    websocket,
+    queue: asyncio.Queue,
+    call_uuid: str | None,
+    state: CallState,
+    generation: int,
+) -> float:
+    total = 0.0
+    while state.is_current(generation):
+        chunk = await queue.get()
+        try:
+            if chunk is None:
+                return total
+            total += await speak_text(session, websocket, str(chunk), call_uuid, state, generation)
+        finally:
+            queue.task_done()
+    return total
+
+
+async def interrupt_response(
+    session: aiohttp.ClientSession,
+    websocket,
+    call_uuid: str | None,
+    state: CallState,
+) -> None:
+    # Save partial turn to history before cancelling so next query has context
+    if state.pending_user_text:
+        state.history.append({"role": "user", "content": state.pending_user_text})
+    if state.pending_reply:
+        state.history.append({"role": "assistant", "content": state.pending_reply})
+    state.pending_user_text = ""
+    state.pending_reply = ""
+
+    state.next_generation()
+    tasks = [t for t in (state.response_task, state.playback_task) if t and not t.done()]
+    for task in tasks:
+        task.cancel()
+    if AUDIO_PLAYBACK_MODE == "mod_audio_stream":
+        await mod_audio_stream_stop(websocket)
+    else:
+        await fs_stop_playback(session, call_uuid)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    state.playback_active = False
+    state.response_task = None
+    state.playback_task = None
+
+
+def start_response_task(state: CallState, coro, call_uuid: str | None) -> None:
+    task = asyncio.create_task(coro)
+
+    def _log_done(done: asyncio.Task) -> None:
+        if done.cancelled():
+            return
+        exc = done.exception()
+        if exc:
+            log.warning(
+                "Response task failed: %s",
+                exc,
+                extra={"call_uuid": call_uuid},
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+
+    task.add_done_callback(_log_done)
+    state.response_task = task
+
+
 async def process_audio(
     session: aiohttp.ClientSession,
     websocket,
     pcm: bytes,
     call_uuid: str | None,
+    state: CallState,
+    generation: int,
     call_config: dict | None = None,
 ) -> float:
     cfg = call_config or {}
@@ -301,86 +559,109 @@ async def process_audio(
         save_wav(pcm, f"input-{ts}.wav")
 
     step_start = time.monotonic()
-    text = await stt_transcribe(session, pcm)
+    text, stt_inference_ms = await stt_transcribe(session, pcm)
+    if not state.is_current(generation):
+        return 0.0
+    stt_ms = round((time.monotonic() - step_start) * 1000)
     log.info(
         "Pipeline stage complete",
-        extra={"call_uuid": call_uuid, "stage": "stt", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
+        extra={"call_uuid": call_uuid, "stage": "stt", "elapsed_ms": stt_ms, "inference_ms": stt_inference_ms},
     )
     if not text:
         log.info("STT returned empty text", extra={"call_uuid": call_uuid})
         return 0.0
 
     log.info("Caller said: %s", text, extra={"call_uuid": call_uuid})
+    state.pending_user_text = text
+    state.pending_reply = ""
+
+    # If there's recent history, enrich the RAG query with the last user turn so
+    # short follow-ups like "on Monday" retrieve the right context.
+    rag_text = text
+    if state.history:
+        last_user = next((h["content"] for h in reversed(state.history) if h["role"] == "user"), None)
+        if last_user and len(text.split()) <= 6:
+            rag_text = f"{last_user} {text}"
+            log.info("RAG enriched query: %s", rag_text, extra={"call_uuid": call_uuid})
 
     step_start = time.monotonic()
-    context = await rag_query(session, text, tenant_id=tenant_id, top_k=top_k)
+    context, rag_server_ms = await rag_query(session, rag_text, tenant_id=tenant_id, top_k=top_k)
+    if not state.is_current(generation):
+        return 0.0
+    rag_ms = round((time.monotonic() - step_start) * 1000)
     log.info(
         "Pipeline stage complete",
-        extra={"call_uuid": call_uuid, "stage": "rag_query", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
+        extra={"call_uuid": call_uuid, "stage": "rag_query", "elapsed_ms": rag_ms, "server_ms": rag_server_ms},
     )
 
-    # Build prompt
-    prompt_context = context or "No specific context available."
-    prompt = (
-        "You are a telephone receptionist. Answer the caller using ONLY the information in the context below.\n"
-        "Context:\n"
-        f"{prompt_context}\n\n"
-        "Instructions:\n"
-        "- Give a direct, short answer in one sentence (max 20 words).\n"
-        "- Use only facts from the context above.\n"
-        "- If the answer is clearly present in the context, state it.\n"
-        "- Only say 'Sorry, I do not have that information' if the topic is truly absent from the context.\n"
-        f"Caller: {text}\n"
-        "Answer:"
-    )
+    prompt = build_prompt(text, context, history=state.history or None)
 
-    # Ask LLM via RAG service /generate endpoint (ollama passthrough)
+    # Ask LLM via streaming RAG service endpoint and feed sentence chunks to TTS.
     step_start = time.monotonic()
-    reply = await llm_generate(session, prompt)
+    reply_parts: list[str] = []
+    pending = ""
+    spoken_dur = 0.0
+    speech_queue: asyncio.Queue = asyncio.Queue(maxsize=8)
+    speaker = asyncio.create_task(
+        speak_queue_worker(session, websocket, speech_queue, call_uuid, state, generation)
+    )
+    try:
+        async for token in llm_generate_stream(session, prompt):
+            if not state.is_current(generation):
+                return 0.0
+            reply_parts.append(token)
+            pending += token
+            state.pending_reply = re.sub(r"\s+", " ", "".join(reply_parts)).strip()
+            chunks, pending = sentence_chunks(pending)
+            for chunk in chunks:
+                await speech_queue.put(chunk)
+
+        chunks, pending = sentence_chunks(pending, force=True)
+        for chunk in chunks:
+            await speech_queue.put(chunk)
+        await speech_queue.put(None)
+        spoken_dur = await speaker
+    except asyncio.CancelledError:
+        speaker.cancel()
+        await asyncio.gather(speaker, return_exceptions=True)
+        raise
+    finally:
+        if not speaker.done():
+            speaker.cancel()
+            await asyncio.gather(speaker, return_exceptions=True)
+
+    reply = re.sub(r"\s+", " ", "".join(reply_parts)).strip()
+    llm_tts_ms = round((time.monotonic() - step_start) * 1000)
     log.info(
         "Pipeline stage complete",
-        extra={"call_uuid": call_uuid, "stage": "llm_generate", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
+        extra={"call_uuid": call_uuid, "stage": "llm_stream_tts", "elapsed_ms": llm_tts_ms},
     )
     if not reply:
         reply = "Sorry, I do not have that information."
+        spoken_dur += await speak_text(session, websocket, reply, call_uuid, state, generation)
+
+    # Save completed turn to history and clear pending state
+    state.history.append({"role": "user",      "content": text})
+    state.history.append({"role": "assistant", "content": reply})
+    if len(state.history) > 12:   # cap at 6 exchanges
+        state.history = state.history[-12:]
+    state.pending_user_text = ""
+    state.pending_reply = ""
 
     log.info("AI reply: %s", reply, extra={"call_uuid": call_uuid})
-
-    step_start = time.monotonic()
-    wav_bytes = await tts_synthesize(session, reply)
     log.info(
-        "Pipeline stage complete",
-        extra={"call_uuid": call_uuid, "stage": "tts", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
+        "call_trace",
+        extra={
+            "call_uuid":        call_uuid,
+            "stt_ms":           stt_ms,
+            "stt_inference_ms": stt_inference_ms,
+            "rag_ms":           rag_ms,
+            "rag_server_ms":    rag_server_ms,
+            "llm_tts_ms":       llm_tts_ms,
+            "total_ms":         stt_ms + rag_ms + llm_tts_ms,
+        },
     )
-    if not wav_bytes:
-        log.warning("TTS produced no audio", extra={"call_uuid": call_uuid})
-        return 0.0
-
-    if AUDIO_PLAYBACK_MODE == "mod_audio_stream":
-        step_start = time.monotonic()
-        tts_dur = await mod_audio_stream_playback(websocket, wav_bytes)
-        log.info(
-            "Pipeline stage complete",
-            extra={"call_uuid": call_uuid, "stage": "mod_audio_stream_playback", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
-        )
-        log.info("mod_audio_stream playback sent, duration=%.2fs", tts_dur, extra={"call_uuid": call_uuid})
-        return tts_dur
-
-    if not call_uuid:
-        return 0.0
-
-    if not await fs_uuid_exists(session, call_uuid):
-        log.info("Call UUID gone: %s", call_uuid, extra={"call_uuid": call_uuid})
-        return 0.0
-
-    step_start = time.monotonic()
-    tts_dur = await fs_broadcast(session, call_uuid, wav_bytes)
-    log.info(
-        "Pipeline stage complete",
-        extra={"call_uuid": call_uuid, "stage": "fs_broadcast", "elapsed_ms": round((time.monotonic() - step_start) * 1000)},
-    )
-    log.info("Broadcast done, duration=%.2fs", tts_dur, extra={"call_uuid": call_uuid})
-    return tts_dur
+    return spoken_dur
 
 
 async def llm_generate(session: aiohttp.ClientSession, prompt: str) -> str:
@@ -417,14 +698,15 @@ async def handler(websocket):
 
     speech_detected = False
     silence_count   = 0
+    active_count    = 0
     frame_count     = 0
-    processing      = False
-    muted_until     = 0.0
+    state           = CallState()
 
     min_bytes     = int(SAMPLE_RATE * 2 * MIN_SPEECH_SEC)
     max_bytes     = int(SAMPLE_RATE * 2 * MAX_SPEECH_SEC)
     silence_limit = SILENCE_MS // FRAME_MS
     pre_bytes     = int(SAMPLE_RATE * 2 * 0.4)
+    barge_frames  = max(1, BARGE_IN_MS // FRAME_MS)
 
     async with aiohttp.ClientSession() as session:
         # Fetch per-DID tenant config
@@ -439,26 +721,23 @@ async def handler(websocket):
         if MOD_AUDIO_STREAM_PROBE_TEXT:
             await asyncio.sleep(MOD_AUDIO_STREAM_PROBE_DELAY)
             log.info("Sending mod_audio_stream probe", extra={"call_uuid": call_uuid})
-            wav = await tts_synthesize(session, MOD_AUDIO_STREAM_PROBE_TEXT)
-            if wav:
-                tts_dur = await mod_audio_stream_playback(websocket, wav)
-                muted_until = time.monotonic() + tts_dur + MUTE_BUFFER_SEC
-            else:
-                log.warning("mod_audio_stream probe TTS failed", extra={"call_uuid": call_uuid})
+            generation = state.next_generation()
+            start_response_task(
+                state,
+                speak_text(session, websocket, MOD_AUDIO_STREAM_PROBE_TEXT, call_uuid, state, generation),
+                call_uuid,
+            )
 
         # Play welcome message on call connect
         if call_uuid and welcome and not MOD_AUDIO_STREAM_PROBE_TEXT:
             await asyncio.sleep(0.8)   # let FreeSWITCH finish call setup
             log.info("Sending welcome message", extra={"call_uuid": call_uuid})
-            wav = await tts_synthesize(session, welcome)
-            if wav:
-                if AUDIO_PLAYBACK_MODE == "mod_audio_stream":
-                    tts_dur = await mod_audio_stream_playback(websocket, wav)
-                else:
-                    tts_dur = await fs_broadcast(session, call_uuid, wav)
-                muted_until = time.monotonic() + tts_dur + MUTE_BUFFER_SEC
-            else:
-                log.warning("Welcome TTS failed", extra={"call_uuid": call_uuid})
+            generation = state.next_generation()
+            start_response_task(
+                state,
+                speak_text(session, websocket, welcome, call_uuid, state, generation),
+                call_uuid,
+            )
 
         try:
             async for message in websocket:
@@ -494,9 +773,6 @@ async def handler(websocket):
 
                     is_active = (vad_speech and frame_rms > 0.004) or frame_rms > RMS_THRESHOLD
 
-                    if time.monotonic() < muted_until:
-                        is_active = False
-
                     if frame_count % 200 == 0:
                         log.debug("frame=%d rms=%.4f vad=%s active=%s buf=%d",
                                   frame_count, frame_rms, vad_speech, is_active, len(audio_buffer),
@@ -507,20 +783,28 @@ async def handler(websocket):
                         pre_speech_buf = pre_speech_buf[-pre_bytes:]
 
                     if is_active:
+                        active_count += 1
+                        if not speech_detected and active_count < barge_frames:
+                            continue
+
                         if not speech_detected:
+                            if state.response_task and not state.response_task.done():
+                                log.info("Caller barge-in detected; interrupting AI response", extra={"call_uuid": call_uuid})
+                                await interrupt_response(session, websocket, call_uuid, state)
                             audio_buffer = bytearray(pre_speech_buf)
                             speech_detected = True
                             log.info("Speech started", extra={"call_uuid": call_uuid})
                         audio_buffer.extend(frame)
                         silence_count = 0
                     else:
+                        if not speech_detected:
+                            active_count = 0
                         if speech_detected:
                             audio_buffer.extend(frame)
                             silence_count += 1
 
                     should_process = (
                         speech_detected
-                        and not processing
                         and len(audio_buffer) >= min_bytes
                         and (silence_count >= silence_limit or len(audio_buffer) >= max_bytes)
                     )
@@ -530,23 +814,24 @@ async def handler(websocket):
                         audio_buffer    = bytearray()
                         pre_speech_buf  = bytearray()
                         silence_count   = 0
+                        active_count    = 0
                         speech_detected = False
-                        processing      = True
                         log.info("Speech ended, captured=%d bytes", len(captured),
                                  extra={"call_uuid": call_uuid})
 
-                        try:
-                            tts_dur = await process_audio(session, websocket, captured, call_uuid, call_config)
-                            if tts_dur > 0:
-                                muted_until = time.monotonic() + tts_dur + MUTE_BUFFER_SEC
-                        finally:
-                            processing = False
+                        generation = state.next_generation()
+                        start_response_task(
+                            state,
+                            process_audio(session, websocket, captured, call_uuid, state, generation, call_config),
+                            call_uuid,
+                        )
 
         except websockets.exceptions.ConnectionClosed:
             log.info("WebSocket closed by FreeSWITCH", extra={"call_uuid": call_uuid})
         except Exception as e:
             log.exception("Handler error: %s", e, extra={"call_uuid": call_uuid})
         finally:
+            await interrupt_response(session, websocket, call_uuid, state)
             if RECORDING_ENABLED and raw_all_frames:
                 save_wav(bytes(raw_all_frames), f"raw-{conn_ts}.wav")
             log.info("Client disconnected, frames=%d", frame_count, extra={"call_uuid": call_uuid})

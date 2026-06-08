@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import wave
 from concurrent.futures import ThreadPoolExecutor
 
@@ -146,19 +147,23 @@ async def synthesize(request: web.Request) -> web.Response:
         if cached is not None:
             tts_cache.move_to_end(cache_key)
             log.info("TTS cache hit: %r @ %dHz", text, out_rate)
-            return web.Response(body=cached, content_type="audio/wav")
+            return web.Response(body=cached, content_type="audio/wav",
+                                headers={"X-Synthesis-Ms": "0"})
 
         log.info("Synthesizing: %r @ %dHz", text, out_rate)
 
+        t0 = time.monotonic()
         loop = asyncio.get_event_loop()
         wav_bytes = await loop.run_in_executor(executor, _synthesize, text, out_rate)
+        synthesis_ms = round((time.monotonic() - t0) * 1000)
 
         tts_cache[cache_key] = wav_bytes
         tts_cache.move_to_end(cache_key)
         while len(tts_cache) > TTS_CACHE_ITEMS:
             tts_cache.popitem(last=False)
 
-        return web.Response(body=wav_bytes, content_type="audio/wav")
+        return web.Response(body=wav_bytes, content_type="audio/wav",
+                            headers={"X-Synthesis-Ms": str(synthesis_ms)})
 
     except Exception as e:
         log.exception("Synthesize error: %s", e)

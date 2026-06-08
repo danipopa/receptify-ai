@@ -22,6 +22,7 @@ import io
 import json
 import logging
 import os
+import time
 import wave
 from concurrent.futures import ThreadPoolExecutor
 
@@ -143,9 +144,11 @@ async def transcribe(request: web.Request) -> web.Response:
             return web.json_response({"error": "audio field required"}, status=400)
 
         loop = asyncio.get_event_loop()
+        t0 = time.monotonic()
         result = await loop.run_in_executor(executor, _transcribe, pcm, sample_rate)
+        result["inference_ms"] = round((time.monotonic() - t0) * 1000)
 
-        log.info("Transcribed: %r (%.2fs)", result["text"], result["duration"])
+        log.info("Transcribed: %r (%.2fs, inference=%dms)", result["text"], result["duration"], result["inference_ms"])
         return web.json_response(result)
 
     except Exception as e:
