@@ -144,6 +144,7 @@ services:
       RAG_URL:        http://localhost:9091
       TTS_URL:        http://localhost:9093
       FS_BRIDGE_URL:  http://localhost:9094
+      AUDIO_PLAYBACK_MODE: mod_audio_stream
       RECORDING_DIR:  /recordings
       RECORDING_ENABLED: "false"
       LOG_LEVEL:      INFO

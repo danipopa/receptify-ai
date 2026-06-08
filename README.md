@@ -164,5 +164,6 @@ All services are fully configured via environment variables. See each service's
 | `TTS_URL` | `http://tts-service:9093` | TTS service URL |
 | `FS_BRIDGE_URL` | `http://fs-bridge:9094` | fs-bridge URL |
 | `RECORDING_ENABLED` | `false` | Save input WAV files |
-| `MUTE_BUFFER_SEC` | `0.5` | Silence after TTS before listening |
+| `BARGE_IN_MS` | `220` | Caller speech duration required to interrupt AI playback |
+| `TTS_CHUNK_CHARS` | `120` | Maximum streamed text chunk size before forcing TTS |
 | `RMS_THRESHOLD` | `0.010` | Minimum energy to trigger VAD |

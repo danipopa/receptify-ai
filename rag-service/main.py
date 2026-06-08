@@ -9,13 +9,14 @@ Endpoints:
   GET  /ready
   POST /query      {"text": "...", "top_k": 3}   → {"context": "..."}
   POST /generate   {"prompt": "..."}              → {"reply": "..."}
+  POST /generate_stream {"prompt": "..."}          → newline-delimited JSON tokens
   POST /rebuild                                   → 202 {"status": "building"} (non-blocking)
 
 Environment variables:
   FAQ_FILE          /opt/ai-ivr-context.txt
   EMBEDDING_MODEL   nomic-embed-text
   LLM_MODEL         llama3.2:1b
-  OLLAMA_HOST       127.0.0.1:11434
+  OLLAMA_HOST       127.0.0.1:11434 or https://ollama.example.com
   RAG_CHUNK_WORDS   60
   RAG_TOP_K         3
   OLLAMA_TIMEOUT    20
@@ -30,6 +31,7 @@ import logging
 import os
 import re
 import threading
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -55,6 +57,7 @@ LOG_LEVEL       = os.getenv("LOG_LEVEL", "INFO").upper()
 
 os.environ.setdefault("HOME", "/root")
 os.environ["OLLAMA_HOST"] = OLLAMA_HOST
+OLLAMA_BASE_URL = OLLAMA_HOST if OLLAMA_HOST.startswith(("http://", "https://")) else f"http://{OLLAMA_HOST}"
 
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -106,7 +109,7 @@ class RagStore:
     def _ollama_post(self, path: str, payload: dict, timeout: int = 10) -> dict:
         data = json.dumps(payload).encode()
         req  = urllib.request.Request(
-            f"http://{OLLAMA_HOST}{path}",
+            f"{OLLAMA_BASE_URL}{path}",
             data=data,
             headers={"Content-Type": "application/json"},
         )
@@ -164,6 +167,9 @@ class RagStore:
             matrix = None
             if len({e.shape for e in raw}) == 1:
                 matrix = np.stack(raw)
+                # pre-normalise once so query() is a single dot-product
+                norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+                matrix = matrix / np.where(norms == 0, 1e-9, norms)
 
             with self._lock:
                 self._chunks     = chunks
@@ -212,9 +218,8 @@ class RagStore:
             # Silent fallback — embedding model unavailable, full context already logged at build time
             return "\n\n".join(chunks)
 
-        norms  = np.linalg.norm(embeddings, axis=1, keepdims=True)
-        norms  = np.where(norms == 0, 1e-9, norms)
-        scores = (embeddings / norms) @ (q / (np.linalg.norm(q) or 1e-9))
+        # embeddings are pre-normalised at build time
+        scores = embeddings @ (q / (np.linalg.norm(q) or 1e-9))
         top    = np.argsort(scores)[::-1][:top_k]
         return "\n\n".join(chunks[i] for i in top)
 
@@ -242,6 +247,40 @@ class RagStore:
         except Exception as e:
             log.warning("generate error: %s", e)
             return "Sorry, I do not have that information."
+
+    def generate_stream(self, prompt: str):
+        payload = {
+            "model": LLM_MODEL,
+            "prompt": prompt,
+            "stream": True,
+            "options": {
+                "num_predict": LLM_NUM_PREDICT,
+                "temperature": LLM_TEMPERATURE,
+            },
+        }
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{OLLAMA_BASE_URL}/api/generate",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
+            for raw_line in resp:
+                if not raw_line.strip():
+                    continue
+                try:
+                    item = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+                token = item.get("response", "")
+                token = ANSI_RE.sub("", token)
+                token = CTRL_RE.sub("", token)
+                token = SPIN_RE.sub("", token)
+                if token:
+                    yield {"token": token}
+                if item.get("done"):
+                    yield {"done": True}
+                    break
 
 
 store = RagStore()
@@ -307,9 +346,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": "text required"})
                     return
                 active_store = get_tenant_store(int(tenant_id)) if tenant_id else store
+                t0 = time.monotonic()
                 context = active_store.query(text, top_k)
-                log.info("query tenant=%s top_k=%d → %d chars", tenant_id, top_k, len(context))
-                self._send_json(200, {"context": context})
+                duration_ms = round((time.monotonic() - t0) * 1000)
+                log.info("query tenant=%s top_k=%d → %d chars %dms", tenant_id, top_k, len(context), duration_ms)
+                self._send_json(200, {"context": context, "duration_ms": duration_ms})
             except Exception as e:
                 log.exception("query error: %s", e)
                 self._send_json(500, {"error": str(e)})
@@ -327,6 +368,45 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 log.exception("generate error: %s", e)
                 self._send_json(500, {"error": str(e)})
+
+        elif self.path == "/generate_stream":
+            try:
+                body   = self._read_json()
+                prompt = str(body.get("prompt", "")).strip()
+                if not prompt:
+                    self._send_json(400, {"error": "prompt required"})
+                    return
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+
+                emitted = False
+                t0 = time.monotonic()
+                for item in store.generate_stream(prompt):
+                    if "token" in item:
+                        emitted = True
+                    if item.get("done"):
+                        item["duration_ms"] = round((time.monotonic() - t0) * 1000)
+                    self.wfile.write(json.dumps(item).encode() + b"\n")
+                    self.wfile.flush()
+
+                if not emitted:
+                    fallback = "Sorry, I do not have that information."
+                    self.wfile.write(json.dumps({"token": fallback}).encode() + b"\n")
+                    self.wfile.write(json.dumps({"done": True, "duration_ms": round((time.monotonic() - t0) * 1000)}).encode() + b"\n")
+                    self.wfile.flush()
+                log.info("generate_stream complete")
+            except (BrokenPipeError, ConnectionResetError):
+                log.info("generate_stream client disconnected")
+            except Exception as e:
+                log.exception("generate_stream error: %s", e)
+                try:
+                    self.wfile.write(json.dumps({"error": str(e)}).encode() + b"\n")
+                    self.wfile.flush()
+                except Exception:
+                    pass
 
         elif self.path == "/rebuild":
             body = self._read_json() if self.headers.get("Content-Length", "0") != "0" else {}

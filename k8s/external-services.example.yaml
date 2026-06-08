@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: receptify-external-services
+  namespace: receptify
+data:
+  RAG_URL: https://YOUR_RAG_CONTAINER_APP_FQDN
