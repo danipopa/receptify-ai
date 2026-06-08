@@ -109,7 +109,7 @@ class JsonFormatter(logging.Formatter):
                 doc[k] = v
         if record.exc_info:
             doc["exc"] = self.formatException(record.exc_info)
-        return json.dumps(doc)
+        return json.dumps(doc, default=str)
 
 handler = logging.StreamHandler()
 handler.setFormatter(JsonFormatter())
