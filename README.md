@@ -174,6 +174,30 @@ ssh -p 22122 root@10.0.0.250 \
   'NAMESPACE=receptify-dev bash -s' < scripts/measure-k8s-latency.sh
 ```
 
+#### Experimental Moshi CPU demo
+
+The development overlay includes a standalone Moshi pod. It is not connected
+to the Receptify phone agent, RAG, or booking workflow. The CPU-only pod caches
+its model in a 20 GiB hostPath volume on `k8s-w1`; replacing the pod preserves
+the model, while deleting the persistent volume does not.
+
+After building and publishing `moshi-service` to the Tux registry, apply the
+development overlay as above. The Moshi Service uses NodePort `30998`;
+Tux's host iptables forwards `10.0.0.250:8998` to that port on `k8s-w1`,
+restricted to the `10.0.0.0/24` LAN.
+
+The LAN URL serves the page, but voice mode needs browser audio APIs that are
+restricted to secure contexts. For voice testing, use a localhost SSH tunnel
+instead. On the Surface, run:
+
+```bash
+ssh -p 22122 -N -L 8998:192.168.100.15:30998 root@10.0.0.250
+```
+
+Then open `http://localhost:8998` in a browser with microphone access and
+click **Connect**. CPU inference is experimental and substantially slower than
+real-time; the pod requests 20 GiB of memory.
+
 #### Testing voice interruption and turn-end timing
 
 The development agent currently has caller barge-in disabled. To compare

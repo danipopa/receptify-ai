@@ -15,6 +15,7 @@ resources:
   - ../receptify-frontend.yaml
   - ../stt-service.yaml
   - ../tts-service.yaml
+  - moshi.yaml
   - freeswitch.yaml
   - fs-bridge.yaml
 
