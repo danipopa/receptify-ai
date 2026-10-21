@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: receptify-api
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: receptify-api
+          env:
+            - name: ALLOWED_ORIGINS
+              value: http://10.0.0.250:30082,http://localhost:30082,http://127.0.0.1:30082
+            - name: ALLOWED_HOSTS
+              value: receptify-api,localhost,127.0.0.1
+            - name: AGENT_WS_URL
+              value: ws://agent-ws:9090
+            - name: FS_EXT_SIP_IP
+              value: "10.0.0.250"
+              valueFrom: null
+            - name: FS_AUTH_CALLS
+              value: "true"
+            - name: FS_DOMAIN
+              value: "10.0.0.250"
+            - name: FS_LINPHONE_USER
+              value: "1000"
+            - name: FS_LINPHONE_DID
+              value: "+12025550100"
+            - name: FS_LINPHONE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-dev-telephony
+                  key: FS_LINPHONE_PASSWORD

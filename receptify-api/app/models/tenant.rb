@@ -3,6 +3,7 @@ class Tenant < ApplicationRecord
 
   has_many :dids, dependent: :destroy
   has_many :call_logs, dependent: :destroy
+  has_many :client_workspaces, dependent: :destroy
   has_one  :tenant_config, dependent: :destroy
 
   before_create :generate_api_key

@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-service
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: warm-ollama-models
+          image: ghcr.io/danipopa/rag-service:latest
+          command:
+            - python3
+            - -c
+          args:
+            - |
+              import json
+              import time
+              import urllib.error
+              import urllib.request
+
+              base = "http://ollama:11434"
+              deadline = time.monotonic() + 300
+              while True:
+                  try:
+                      with urllib.request.urlopen(f"{base}/api/tags", timeout=2):
+                          break
+                  except (urllib.error.URLError, TimeoutError) as exc:
+                      if time.monotonic() >= deadline:
+                          raise RuntimeError(f"Ollama did not become ready: {exc}") from exc
+                      time.sleep(2)
+
+              def post(path, payload):
+                  request = urllib.request.Request(
+                      f"{base}{path}",
+                      data=json.dumps(payload).encode(),
+                      headers={"Content-Type": "application/json"},
+                  )
+                  with urllib.request.urlopen(request, timeout=120) as response:
+                      response.read()
+
+              post("/api/embeddings", {
+                  "model": "nomic-embed-text",
+                  "prompt": "Warm up the embedding model.",
+              })
+              post("/api/generate", {
+                  "model": "llama3.2:1b",
+                  "prompt": "Reply with one word: ready.",
+                  "stream": False,
+                  "options": {"num_predict": 1},
+              })
+      volumes:
+        - name: rag-data
+          persistentVolumeClaim: null
+          configMap:
+            name: faq-context
+      containers:
+        - name: rag-service
+          volumeMounts:
+            - name: rag-data
+              mountPath: /faq
+              readOnly: true

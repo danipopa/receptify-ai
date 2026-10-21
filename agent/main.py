@@ -18,10 +18,10 @@ Environment variables (all optional, sensible defaults shown):
   RECORDING_DIR      /tmp/recordings
   RECORDING_ENABLED  false
   WELCOME_MESSAGE    Thank you for calling. How can I help you today?
-  BARGE_IN_MS        220
+  BARGE_IN_MS        400
   TTS_CHUNK_CHARS    120
-  SILENCE_MS         900
-  MIN_SPEECH_SEC     0.8
+  SILENCE_MS         600
+  MIN_SPEECH_SEC     0.35
   MAX_SPEECH_SEC     8.0
   RMS_THRESHOLD      0.010
   LOG_LEVEL          INFO
@@ -65,8 +65,11 @@ MOD_AUDIO_STREAM_PROBE_DELAY = float(os.getenv("MOD_AUDIO_STREAM_PROBE_DELAY", "
 
 RECORDING_DIR     = os.getenv("RECORDING_DIR",     "/tmp/recordings")
 RECORDING_ENABLED = os.getenv("RECORDING_ENABLED", "false").lower() == "true"
-BARGE_IN_MS       = int(os.getenv("BARGE_IN_MS", "220"))
+BARGE_IN_ENABLED  = os.getenv("BARGE_IN_ENABLED", "true").lower() == "true"
+BARGE_IN_MS       = int(os.getenv("BARGE_IN_MS", "400"))
+BARGE_IN_RMS_THRESHOLD = float(os.getenv("BARGE_IN_RMS_THRESHOLD", "0.006"))
 TTS_CHUNK_CHARS   = int(os.getenv("TTS_CHUNK_CHARS", "120"))
+WELCOME_LEAD_IN_MS = 150
 
 WELCOME_MESSAGE   = os.getenv(
     "WELCOME_MESSAGE",
@@ -78,8 +81,8 @@ SAMPLE_RATE       = CAPTURE_RATE
 FRAME_MS          = 20
 FRAME_SIZE        = int(SAMPLE_RATE * FRAME_MS / 1000) * 2   # bytes  (320 bytes @ 8kHz)
 
-SILENCE_MS        = int(os.getenv("SILENCE_MS",    "900"))
-MIN_SPEECH_SEC    = float(os.getenv("MIN_SPEECH_SEC", "0.8"))
+SILENCE_MS        = int(os.getenv("SILENCE_MS",    "600"))
+MIN_SPEECH_SEC    = float(os.getenv("MIN_SPEECH_SEC", "0.35"))
 MAX_SPEECH_SEC    = float(os.getenv("MAX_SPEECH_SEC", "8.0"))
 RMS_THRESHOLD     = float(os.getenv("RMS_THRESHOLD",  "0.010"))
 
@@ -123,6 +126,7 @@ log = logging.getLogger("agent")
 
 os.makedirs(RECORDING_DIR, exist_ok=True)
 vad = webrtcvad.Vad(2)
+barge_in_vad = webrtcvad.Vad(2)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -144,6 +148,25 @@ def extract_did(path: str) -> str | None:
     parsed = urlparse(path)
     val = parse_qs(parsed.query).get("did")
     return val[0] if val else None
+
+
+def speech_frame_is_active(
+    frame: bytes,
+    frame_rms: float,
+    response_active: bool,
+    vad_speech: bool,
+) -> bool:
+    if response_active:
+        if not BARGE_IN_ENABLED:
+            return False
+        try:
+            return (
+                barge_in_vad.is_speech(frame, SAMPLE_RATE)
+                and frame_rms > BARGE_IN_RMS_THRESHOLD
+            )
+        except Exception:
+            return False
+    return (vad_speech and frame_rms > 0.004) or frame_rms > RMS_THRESHOLD
 
 
 async def fetch_did_config(session: aiohttp.ClientSession, did: str) -> dict:
@@ -181,6 +204,23 @@ def wav_duration(wav_bytes: bytes) -> float:
         return 3.0
 
 
+def prepend_wav_silence(wav_bytes: bytes, duration_ms: int) -> bytes:
+    with wave.open(io.BytesIO(wav_bytes), "rb") as source:
+        params = source.getparams()
+        frames = source.readframes(params.nframes)
+
+    silence_frames = params.framerate * duration_ms // 1000
+    silence = b"\0" * silence_frames * params.nchannels * params.sampwidth
+    output = io.BytesIO()
+    with wave.open(output, "wb") as destination:
+        destination.setnchannels(params.nchannels)
+        destination.setsampwidth(params.sampwidth)
+        destination.setframerate(params.framerate)
+        destination.setcomptype(params.comptype, params.compname)
+        destination.writeframes(silence + frames)
+    return output.getvalue()
+
+
 def rms(audio_bytes: bytes) -> float:
     arr = np.frombuffer(audio_bytes, dtype="<i2").astype(np.float32) / 32768.0
     return float(np.sqrt(np.mean(arr ** 2))) if len(arr) else 0.0
@@ -207,21 +247,24 @@ async def rag_query(
     session: aiohttp.ClientSession,
     text: str,
     tenant_id: int | None = None,
+    workspace_id: int | None = None,
     top_k: int = 3,
 ) -> tuple[str, int]:
     try:
         payload: dict = {"text": text, "top_k": top_k}
         if tenant_id:
             payload["tenant_id"] = tenant_id
+        if workspace_id:
+            payload["workspace_id"] = workspace_id
         async with session.post(
             f"{RAG_URL}/query",
             json=payload,
-            timeout=aiohttp.ClientTimeout(total=5),
+            timeout=aiohttp.ClientTimeout(total=12),
         ) as r:
             data = await r.json()
             return data.get("context", ""), int(data.get("duration_ms", 0))
     except Exception as e:
-        log.warning("RAG service error: %s", e)
+        log.warning("RAG service error: %s", repr(e))
         return "", 0
 
 
@@ -322,6 +365,7 @@ class CallState:
         # Tracks the current turn so interrupt_response can save partial context
         self.pending_user_text: str = ""
         self.pending_reply: str = ""
+        self.appointment_flow: dict | None = None
 
     def next_generation(self) -> int:
         self.generation += 1
@@ -353,6 +397,262 @@ def build_prompt(text: str, context: str, history: list[dict] | None = None) -> 
         f"Caller: {text}\n"
         "Answer:"
     )
+
+
+async def internal_api_request(
+    session: aiohttp.ClientSession,
+    method: str,
+    path: str,
+    payload: dict | None = None,
+) -> dict:
+    headers = {"X-Internal-Token": INTERNAL_TOKEN} if INTERNAL_TOKEN else {}
+    async with session.request(
+        method,
+        f"{API_URL}{path}",
+        json=payload,
+        headers=headers,
+        timeout=aiohttp.ClientTimeout(total=6),
+    ) as response:
+        try:
+            data = await response.json()
+        except (aiohttp.ContentTypeError, json.JSONDecodeError) as exc:
+            body = await response.text()
+            raise RuntimeError(f"Internal API returned invalid JSON (HTTP {response.status}): {body[:200]}") from exc
+        if response.status < 200 or response.status >= 300:
+            raise RuntimeError(data.get("error", f"Internal API request failed (HTTP {response.status})"))
+        return data
+
+
+def parse_preferred_date(text: str, timezone_name: str) -> datetime.date | None:
+    from zoneinfo import ZoneInfo
+
+    today = datetime.datetime.now(ZoneInfo(timezone_name)).date()
+    normalized = text.lower().strip()
+    if re.search(r"\btoday\b", normalized):
+        return today
+    if re.search(r"\btomorrow\b", normalized):
+        return today + datetime.timedelta(days=1)
+
+    iso_date = re.search(r"\b\d{4}-\d{2}-\d{2}\b", normalized)
+    if iso_date:
+        try:
+            return datetime.date.fromisoformat(iso_date.group())
+        except ValueError:
+            return None
+
+    weekdays = {
+        "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+        "friday": 4, "saturday": 5, "sunday": 6,
+    }
+    for name, weekday in weekdays.items():
+        if re.search(rf"\b{name}\b", normalized):
+            delta = (weekday - today.weekday()) % 7 or 7
+            return today + datetime.timedelta(days=delta)
+    return None
+
+
+def format_slot_choices(slots: list[dict]) -> str:
+    return " ".join(
+        f"{index}. {slot['local_time']}."
+        for index, slot in enumerate(slots, start=1)
+    )
+
+
+def choice_index(text: str, maximum: int) -> int | None:
+    choices = {
+        1: ("first", "one"),
+        2: ("second", "two"),
+        3: ("third", "three"),
+        4: ("fourth", "four"),
+        5: ("fifth", "five"),
+        6: ("sixth", "six"),
+        7: ("seventh", "seven"),
+        8: ("eighth", "eight"),
+        9: ("ninth", "nine"),
+        10: ("tenth", "ten"),
+    }
+    match = re.search(r"\b([1-9]\d?)\b", text)
+    if match:
+        selected = int(match.group(1))
+        return selected if selected <= maximum else None
+    for index, words in choices.items():
+        if index <= maximum and any(re.search(rf"\b{word}\b", text, re.IGNORECASE) for word in words):
+            return index
+    return None
+
+
+async def handle_appointment_turn(
+    session: aiohttp.ClientSession,
+    state: CallState,
+    text: str,
+    workspace_id: int | None,
+    call_uuid: str | None,
+) -> str | None:
+    if state.appointment_flow is None:
+        if not re.search(r"\b(appointment|book(?:ing)?|schedule|consultation)\b", text, re.IGNORECASE):
+            return None
+        if not workspace_id:
+            return "This phone number is not linked to a client workspace, so I cannot book an appointment."
+        try:
+            config = await internal_api_request(
+                session, "GET", f"/internal/client_workspaces/{workspace_id}/appointment_types"
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
+            log.warning("Appointment type lookup failed: %s", exc, extra={"call_uuid": call_uuid})
+            return "I cannot access the booking calendar right now. No appointment has been made. Please try again later."
+
+        appointment_types = config.get("appointment_types", [])
+        if not appointment_types:
+            return "There are no appointment types configured for this client yet, so I cannot book a time."
+        state.appointment_flow = {
+            "stage": "type" if len(appointment_types) > 1 else "name",
+            "types": appointment_types,
+            "type": appointment_types[0] if len(appointment_types) == 1 else None,
+            "timezone": config.get("timezone", "UTC"),
+        }
+        if len(appointment_types) > 1:
+            choices = " ".join(
+                f"{index}. {item['name']}."
+                for index, item in enumerate(appointment_types, start=1)
+            )
+            return f"What type of appointment would you like? {choices}"
+        return f"I can arrange a {appointment_types[0]['name']}. May I have your name?"
+
+    flow = state.appointment_flow
+    if re.fullmatch(r"\s*(cancel|cancel booking|stop booking)\s*[.!]?\s*", text, re.IGNORECASE):
+        state.appointment_flow = None
+        return "I have not booked an appointment."
+
+    stage = flow["stage"]
+
+    if stage == "type":
+        selected = None
+        index = choice_index(text, len(flow["types"]))
+        if index is not None:
+            selected = flow["types"][index - 1]
+        if selected is None:
+            selected = next(
+                (item for item in flow["types"] if item["name"].lower() in text.lower()),
+                None,
+            )
+        if selected is None:
+            return "Please say the number or name of the appointment type you want."
+        flow["type"] = selected
+        flow["stage"] = "name"
+        return f"May I have your name for the {selected['name']}?"
+
+    if stage == "name":
+        name = text.strip()
+        if len(name) < 2 or len(name) > 100:
+            return "Please tell me your name so I can add it to the booking."
+        flow["caller_name"] = name
+        flow["stage"] = "phone"
+        return "What callback phone number should I put on the booking? Please include the country code."
+
+    if stage == "phone":
+        digits = re.sub(r"\D", "", text)
+        if not 7 <= len(digits) <= 15:
+            return "I did not get a valid callback number. Please say it again, including the country code."
+        flow["callback_number"] = ("+" if text.strip().startswith("+") else "") + digits
+        flow["stage"] = "reason"
+        return "Would you like to briefly say what the appointment is about? This is optional; say skip to continue."
+
+    if stage == "reason":
+        if not re.search(
+            r"\b(skip|none|no reason|no thanks|rather not|prefer not|don't want|do not want)\b",
+            text,
+            re.IGNORECASE,
+        ):
+            purpose = text.strip()
+            if len(purpose) > 500:
+                return "Please keep the reason brief, or say skip to continue without one."
+            flow["purpose"] = purpose
+        flow["stage"] = "date"
+        return "What date would you prefer? You can say a weekday, today, tomorrow, or a date like 2026-10-25."
+
+    if stage == "date":
+        preferred_date = parse_preferred_date(text, flow["timezone"])
+        if preferred_date is None:
+            return "I could not identify that date. Please say a weekday, today, tomorrow, or a date like 2026-10-25."
+        try:
+            result = await internal_api_request(
+                session,
+                "POST",
+                f"/internal/client_workspaces/{workspace_id}/availability",
+                {
+                    "appointment_type_id": flow["type"]["id"],
+                    "from": preferred_date.isoformat(),
+                    "to": (preferred_date + datetime.timedelta(days=6)).isoformat(),
+                    "limit": 3,
+                },
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
+            log.warning("Appointment availability lookup failed: %s", exc, extra={"call_uuid": call_uuid})
+            return "I cannot check the booking calendar right now. No appointment has been made. Please try again later."
+        slots = result.get("slots", [])
+        if not slots:
+            return "I could not find an opening in the following week. Please suggest another date."
+        flow["slots"] = slots
+        flow["stage"] = "slot"
+        return f"I have these available times: {format_slot_choices(slots)} Which number would you prefer?"
+
+    if stage == "slot":
+        index = choice_index(text, len(flow["slots"]))
+        if index is None:
+            return "Please choose one of the offered times by saying its number."
+        selected = flow["slots"][index - 1]
+        flow["selected_slot"] = selected
+        flow["stage"] = "confirm"
+        return (
+            f"To confirm, I will book a {flow['type']['name']} for {flow['caller_name']} "
+            f"at {selected['local_time']}, with callback number {flow['callback_number']}. "
+            "Should I book it? Please say yes or no."
+        )
+
+    if stage == "confirm":
+        if re.fullmatch(
+            r"\s*(yes|yeah|yep|confirm(?:ed)?|correct|book it|that's right|that is right)"
+            r"(?:[\s,.!]+please)?[\s.!]*",
+            text,
+            re.IGNORECASE,
+        ):
+            try:
+                result = await internal_api_request(
+                    session,
+                    "POST",
+                    f"/internal/client_workspaces/{workspace_id}/appointments",
+                    {
+                        "appointment_type_id": flow["type"]["id"],
+                        "caller_name": flow["caller_name"],
+                        "callback_number": flow["callback_number"],
+                        "purpose": flow.get("purpose"),
+                        "starts_at": flow["selected_slot"]["starts_at"],
+                        "confirmed": True,
+                    },
+                )
+            except RuntimeError as exc:
+                if "no longer available" in str(exc).lower():
+                    flow["stage"] = "date"
+                    flow.pop("slots", None)
+                    flow.pop("selected_slot", None)
+                    return "That time was just taken. Please suggest another date and I will check again."
+                log.warning("Appointment booking failed: %s", exc, extra={"call_uuid": call_uuid})
+                state.appointment_flow = None
+                return "I could not complete the booking. No appointment has been made. Please try again later."
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                log.warning("Appointment booking request failed: %s", exc, extra={"call_uuid": call_uuid})
+                state.appointment_flow = None
+                return "I could not complete the booking. No appointment has been made. Please try again later."
+            state.appointment_flow = None
+            appointment = result.get("appointment", {})
+            return f"Your appointment is booked for {flow['selected_slot']['local_time']}. Your booking reference is {appointment.get('id')}."
+        if re.search(r"^\s*(no|cancel|not now|do not|don't)\b", text, re.IGNORECASE):
+            state.appointment_flow = None
+            return "I have not booked anything. You can ask me to book an appointment whenever you are ready."
+        return "Please say yes to book this appointment, or no to leave it unbooked."
+
+    state.appointment_flow = None
+    return "I could not continue that booking. No appointment has been made."
 
 
 def sentence_chunks(buffer: str, force: bool = False) -> tuple[list[str], str]:
@@ -448,13 +748,23 @@ async def speak_text(
     call_uuid: str | None,
     state: CallState,
     generation: int,
+    leading_silence_ms: int = 0,
 ) -> float:
     if not state.is_current(generation) or not text.strip():
         return 0.0
-    wav_bytes, _synthesis_ms = await tts_synthesize(session, text)
+    wav_bytes, synthesis_ms = await tts_synthesize(session, text)
     if not wav_bytes:
         log.warning("TTS produced no audio", extra={"call_uuid": call_uuid})
         return 0.0
+    if leading_silence_ms:
+        wav_bytes = prepend_wav_silence(wav_bytes, leading_silence_ms)
+    log.info(
+        "TTS audio ready synthesis_ms=%d duration_ms=%d lead_in_ms=%d",
+        synthesis_ms,
+        round(wav_duration(wav_bytes) * 1000),
+        leading_silence_ms,
+        extra={"call_uuid": call_uuid},
+    )
     state.playback_task = asyncio.create_task(
         play_wav(session, websocket, wav_bytes, call_uuid, state, generation)
     )
@@ -544,6 +854,7 @@ async def process_audio(
 ) -> float:
     cfg = call_config or {}
     tenant_id = cfg.get("tenant_id")
+    workspace_id = cfg.get("workspace_id")
     top_k     = int(cfg.get("rag_top_k") or 3)
 
     audio_rms = rms(pcm)
@@ -575,6 +886,24 @@ async def process_audio(
     state.pending_user_text = text
     state.pending_reply = ""
 
+    appointment_reply = await handle_appointment_turn(
+        session, state, text, workspace_id, call_uuid
+    )
+    if appointment_reply is not None:
+        if not state.is_current(generation):
+            return 0.0
+        state.pending_reply = appointment_reply
+        spoken_dur = await speak_text(
+            session, websocket, appointment_reply, call_uuid, state, generation
+        )
+        state.history.append({"role": "user", "content": text})
+        state.history.append({"role": "assistant", "content": appointment_reply})
+        if len(state.history) > 12:
+            state.history = state.history[-12:]
+        state.pending_user_text = ""
+        state.pending_reply = ""
+        return spoken_dur
+
     # If there's recent history, enrich the RAG query with the last user turn so
     # short follow-ups like "on Monday" retrieve the right context.
     rag_text = text
@@ -585,7 +914,13 @@ async def process_audio(
             log.info("RAG enriched query: %s", rag_text, extra={"call_uuid": call_uuid})
 
     step_start = time.monotonic()
-    context, rag_server_ms = await rag_query(session, rag_text, tenant_id=tenant_id, top_k=top_k)
+    context, rag_server_ms = await rag_query(
+        session,
+        rag_text,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        top_k=top_k,
+    )
     if not state.is_current(generation):
         return 0.0
     rag_ms = round((time.monotonic() - step_start) * 1000)
@@ -735,7 +1070,15 @@ async def handler(websocket):
             generation = state.next_generation()
             start_response_task(
                 state,
-                speak_text(session, websocket, welcome, call_uuid, state, generation),
+                speak_text(
+                    session,
+                    websocket,
+                    welcome,
+                    call_uuid,
+                    state,
+                    generation,
+                    leading_silence_ms=WELCOME_LEAD_IN_MS,
+                ),
                 call_uuid,
             )
 
@@ -771,7 +1114,10 @@ async def handler(websocket):
                     except Exception:
                         vad_speech = False
 
-                    is_active = (vad_speech and frame_rms > 0.004) or frame_rms > RMS_THRESHOLD
+                    response_active = state.response_task and not state.response_task.done()
+                    is_active = speech_frame_is_active(
+                        frame, frame_rms, bool(response_active), vad_speech
+                    )
 
                     if frame_count % 200 == 0:
                         log.debug("frame=%d rms=%.4f vad=%s active=%s buf=%d",
@@ -852,7 +1198,7 @@ async def http_health_server():
     app = web.Application()
     app.router.add_get("/health", health)
     app.router.add_get("/ready",  ready)
-    runner = web.AppRunner(app)
+    runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", HTTP_PORT)
     await site.start()

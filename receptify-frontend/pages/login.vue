@@ -39,7 +39,7 @@ async function submit() {
   try {
     const data = await api.post<{ token: string; tenant: any }>("/auth/login", form)
     authStore.setAuth(data.token, data.tenant)
-    await navigateTo("/dashboard")
+    await navigateTo(data.tenant.platform_admin ? "/admin" : "/dashboard")
   } catch (e: any) {
     error.value = e.message
   } finally {

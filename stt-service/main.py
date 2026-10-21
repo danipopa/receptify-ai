@@ -38,6 +38,7 @@ WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL",   "base")
 WHISPER_DEVICE     = os.getenv("WHISPER_DEVICE",  "cpu")
 WHISPER_COMPUTE    = os.getenv("WHISPER_COMPUTE", "int8")
 WHISPER_LANGUAGE   = os.getenv("WHISPER_LANGUAGE","en")
+WHISPER_CPU_THREADS = max(1, int(os.getenv("WHISPER_CPU_THREADS", "2")))
 HOST               = os.getenv("HOST",            "0.0.0.0")
 PORT               = int(os.getenv("PORT",        "9092"))
 LOG_LEVEL          = os.getenv("LOG_LEVEL",       "INFO").upper()
@@ -67,12 +68,18 @@ log = logging.getLogger("stt")
 # Whisper (loaded once at startup)
 # ---------------------------------------------------------------------------
 
-log.info("Loading Whisper model=%s device=%s compute=%s",
-         WHISPER_MODEL_NAME, WHISPER_DEVICE, WHISPER_COMPUTE)
-model = WhisperModel(WHISPER_MODEL_NAME, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE)
+log.info("Loading Whisper model=%s device=%s compute=%s cpu_threads=%d",
+         WHISPER_MODEL_NAME, WHISPER_DEVICE, WHISPER_COMPUTE, WHISPER_CPU_THREADS)
+model = WhisperModel(
+    WHISPER_MODEL_NAME,
+    device=WHISPER_DEVICE,
+    compute_type=WHISPER_COMPUTE,
+    cpu_threads=WHISPER_CPU_THREADS,
+    num_workers=1,
+)
 log.info("Whisper ready")
 
-executor = ThreadPoolExecutor(max_workers=2)
+executor = ThreadPoolExecutor(max_workers=1)
 
 NOISE_WORDS = {
     "uh", "um", "hmm", "bam", "thankyou", "thanks", "okay", "ok", "hellohello",

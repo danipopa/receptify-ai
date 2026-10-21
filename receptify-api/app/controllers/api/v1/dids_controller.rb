@@ -2,7 +2,7 @@ module Api
   module V1
     class DidsController < BaseController
       DID_ATTRS = %i[
-        id number provider status
+        id number provider status client_workspace_id
         gateway_type gateway_host gateway_user gateway_realm gateway_port
         created_at
       ].freeze
@@ -44,11 +44,16 @@ module Api
       private
 
       def did_params
-        params.permit(
-          :number, :provider, :status,
+        permitted = params.permit(
+          :number, :provider, :status, :client_workspace_id,
           :gateway_type, :gateway_host, :gateway_user,
           :gateway_password, :gateway_realm, :gateway_port
         )
+        if params.key?(:client_workspace_id)
+          workspace_id = params[:client_workspace_id].presence
+          permitted[:client_workspace_id] = workspace_id && current_tenant.client_workspaces.find(workspace_id).id
+        end
+        permitted
       end
 
       # Trigger FreeSWITCH to re-fetch sofia.conf from xml_curl (picks up new/removed gateways).

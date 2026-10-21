@@ -24,7 +24,7 @@ module Api
       end
 
       def tenant_json(tenant)
-        tenant.as_json(only: %i[id name subdomain email plan status created_at])
+        tenant.as_json(only: %i[id name subdomain email plan status platform_admin created_at])
       end
     end
   end

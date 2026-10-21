@@ -31,6 +31,8 @@ spec:
               value: cpu
             - name: WHISPER_COMPUTE
               value: int8
+            - name: WHISPER_CPU_THREADS
+              value: "2"
             - name: WHISPER_LANGUAGE
               value: en
             - name: LOG_LEVEL

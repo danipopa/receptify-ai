@@ -59,7 +59,9 @@ spec:
             - name: SILENCE_MS
               value: "400"
             - name: BARGE_IN_MS
-              value: "220"
+              value: "800"
+            - name: BARGE_IN_RMS_THRESHOLD
+              value: "0.015"
             - name: TTS_CHUNK_CHARS
               value: "120"
             - name: LOG_LEVEL

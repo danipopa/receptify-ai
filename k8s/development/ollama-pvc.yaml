@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-pvc
+spec:
+  storageClassName: ""
+  volumeName: receptify-dev-ollama-pv

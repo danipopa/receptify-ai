@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fs-bridge
+  labels:
+    app: fs-bridge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fs-bridge
+  template:
+    metadata:
+      labels:
+        app: fs-bridge
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-w2
+      containers:
+        - name: fs-bridge
+          image: ghcr.io/danipopa/fs-bridge:latest
+          command: ["python3", "main.py"]
+          ports:
+            - containerPort: 9094
+          env:
+            - name: FS_HOST
+              value: "freeswitch"
+            - name: FS_PORT
+              value: "8021"
+            - name: FS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-dev-telephony
+                  key: FS_ESL_PASSWORD
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "9094"
+            - name: WAV_DIR
+              value: "/tmp/fs-bridge-wav"
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: AGENT_WS_URL
+              value: "ws://agent-ws:9090"
+          volumeMounts:
+            - name: wav
+              mountPath: /tmp/fs-bridge-wav
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9094
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9094
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+      volumes:
+        - name: wav
+          hostPath:
+            path: /home/storage/ns/receptify-dev/fs-bridge-wav
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fs-bridge
+  labels:
+    app: fs-bridge
+spec:
+  selector:
+    app: fs-bridge
+  ports:
+    - port: 9094
+      targetPort: 9094
+      protocol: TCP

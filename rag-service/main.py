@@ -33,6 +33,7 @@ import re
 import threading
 import time
 import urllib.request
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
@@ -54,6 +55,9 @@ LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 HOST            = os.getenv("HOST",  "0.0.0.0")
 PORT            = int(os.getenv("PORT", "9091"))
 LOG_LEVEL       = os.getenv("LOG_LEVEL", "INFO").upper()
+API_URL         = os.getenv("API_URL", "http://receptify-api").rstrip("/")
+INTERNAL_TOKEN  = os.getenv("INTERNAL_TOKEN", "").strip()
+MAX_WORKSPACE_STORES = 64
 
 os.environ.setdefault("HOME", "/root")
 os.environ["OLLAMA_HOST"] = OLLAMA_HOST
@@ -98,6 +102,8 @@ class RagStore:
         self._chunks: list[str]             = []
         self._embeddings: np.ndarray | None = None
         self._state: str                    = self.EMPTY
+        self._text_override: str | None     = None
+        self._content_revision              = 0
 
     @property
     def state(self) -> str:
@@ -126,10 +132,32 @@ class RagStore:
             return None
 
     def _load_text(self) -> str:
+        if self._text_override is not None:
+            return self._text_override
         if os.path.exists(self.faq_file):
             with open(self.faq_file, "r", encoding="utf-8") as f:
                 return f.read()
         return "Working hours are Monday to Friday, 9 AM to 5 PM."
+
+    @staticmethod
+    def _split_chunks(text: str) -> list[str]:
+        words = text.split()
+        return [
+            " ".join(words[i : i + RAG_CHUNK_WORDS])
+            for i in range(0, len(words), RAG_CHUNK_WORDS)
+            if words[i : i + RAG_CHUNK_WORDS]
+        ]
+
+    def set_content(self, text: str) -> bool:
+        with self._lock:
+            if self._text_override == text:
+                return False
+            self._text_override = text
+            self._content_revision += 1
+            self._chunks = []
+            self._embeddings = None
+            self._state = self.EMPTY
+            return True
 
     # ---- public ------------------------------------------------------------
 
@@ -137,22 +165,33 @@ class RagStore:
         """(Re)build synchronously. Returns chunk count."""
         with self._lock:
             self._state = self.BUILDING
+            revision = self._content_revision
+            workspace_content = self._text_override is not None
 
         try:
             text  = self._load_text()
-            words = text.split()
-            chunks = [
-                " ".join(words[i : i + RAG_CHUNK_WORDS])
-                for i in range(0, len(words), RAG_CHUNK_WORDS)
-                if words[i : i + RAG_CHUNK_WORDS]
-            ]
+            chunks = self._split_chunks(text)
             if not chunks:
                 log.warning("No chunks to embed — empty FAQ?")
                 with self._lock:
+                    if revision != self._content_revision:
+                        self._state = self.EMPTY
+                        return 0
                     self._chunks     = []
                     self._embeddings = None
                     self._state      = self.EMPTY
                 return 0
+
+            if workspace_content:
+                with self._lock:
+                    if revision != self._content_revision:
+                        self._state = self.EMPTY
+                        return 0
+                    self._chunks = chunks
+                    self._embeddings = None
+                    self._state = self.READY
+                log.info("Workspace lexical index ready: %d chunks", len(chunks))
+                return len(chunks)
 
             log.info("Embedding %d chunks with %s", len(chunks), EMBEDDING_MODEL)
             embed_failed = False
@@ -172,6 +211,9 @@ class RagStore:
                 matrix = matrix / np.where(norms == 0, 1e-9, norms)
 
             with self._lock:
+                if revision != self._content_revision:
+                    self._state = self.EMPTY
+                    return 0
                 self._chunks     = chunks
                 self._embeddings = matrix
                 self._state      = self.READY
@@ -191,7 +233,13 @@ class RagStore:
 
         def _run() -> None:
             try:
-                self.build()
+                while True:
+                    with self._lock:
+                        revision = self._content_revision
+                    self.build()
+                    with self._lock:
+                        if revision == self._content_revision or not self._load_text().strip():
+                            break
             except Exception as exc:
                 log.exception("Background build failed: %s", exc)
             finally:
@@ -206,22 +254,50 @@ class RagStore:
             embeddings = self._embeddings
 
         if not chunks:
-            return self._load_text()
+            chunks = self._split_chunks(self._load_text())
+            if not chunks:
+                return ""
 
         if embeddings is None:
-            # No embeddings available — return all chunks so LLM has full context
-            log.warning("Embeddings unavailable, returning all %d chunks", len(chunks))
-            return "\n\n".join(chunks)
+            return self._keyword_context(text, chunks, top_k)
 
         q = self._embed(text, warn=False)
         if q is None or q.shape != embeddings[0].shape:
-            # Silent fallback — embedding model unavailable, full context already logged at build time
-            return "\n\n".join(chunks)
+            return self._keyword_context(text, chunks, top_k)
 
         # embeddings are pre-normalised at build time
         scores = embeddings @ (q / (np.linalg.norm(q) or 1e-9))
         top    = np.argsort(scores)[::-1][:top_k]
         return "\n\n".join(chunks[i] for i in top)
+
+    @staticmethod
+    def _keyword_context(text: str, chunks: list[str], top_k: int) -> str:
+        stop_words = {
+            "a", "an", "and", "are", "as", "at", "be", "can", "do", "does",
+            "for", "from", "how", "i", "in", "is", "it", "me", "my", "of",
+            "on", "or", "our", "that", "the", "their", "they", "this", "to",
+            "we", "what", "with", "you", "your",
+        }
+        terms = set(re.findall(r"[a-z0-9]+", text.lower())) - stop_words
+        limit = max(1, min(int(top_k), len(chunks)))
+        if not terms:
+            return "\n\n".join(chunks[:limit])
+
+        tokenized_chunks = [
+            set(re.findall(r"[a-z0-9]+", chunk.lower()))
+            for chunk in chunks
+        ]
+        ranked = sorted(
+            (
+                (len(terms & tokens), index)
+                for index, tokens in enumerate(tokenized_chunks)
+                if terms & tokens
+            ),
+            key=lambda item: (-item[0], item[1]),
+        )
+        selected = [chunks[index] for _, index in ranked[:limit]] or chunks[:limit]
+        log.info("Keyword fallback selected %d of %d chunks", len(selected), len(chunks))
+        return "\n\n".join(selected)
 
     def generate(self, prompt: str) -> str:
         try:
@@ -288,6 +364,8 @@ store = RagStore()
 # Per-tenant store registry: tenant_id (int) → RagStore
 _tenant_stores: dict[int, RagStore] = {}
 _tenant_stores_lock = threading.Lock()
+_workspace_stores: OrderedDict[int, tuple[RagStore, str]] = OrderedDict()
+_workspace_stores_lock = threading.Lock()
 
 
 def get_tenant_store(tenant_id: int) -> RagStore:
@@ -301,13 +379,51 @@ def get_tenant_store(tenant_id: int) -> RagStore:
             log.info("Created store for tenant_id=%d faq=%s", tenant_id, faq)
         return _tenant_stores[tenant_id]
 
+
+def get_workspace_store(workspace_id: int) -> RagStore:
+    request = urllib.request.Request(
+        f"{API_URL}/internal/client_workspaces/{workspace_id}/knowledge",
+        headers={"X-Internal-Token": INTERNAL_TOKEN} if INTERNAL_TOKEN else {},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        content_data = json.loads(response.read())
+
+    revision = str(content_data.get("updated_at", ""))
+    content = str(content_data.get("content", ""))
+    if not revision:
+        raise ValueError(f"Workspace {workspace_id} knowledge response is missing updated_at")
+
+    with _workspace_stores_lock:
+        cached = _workspace_stores.get(workspace_id)
+        if cached and cached[1] == revision:
+            _workspace_stores.move_to_end(workspace_id)
+            return cached[0]
+
+        active_store = cached[0] if cached else RagStore(faq_file="")
+        changed = active_store.set_content(content)
+        _workspace_stores[workspace_id] = (active_store, revision)
+        _workspace_stores.move_to_end(workspace_id)
+        while len(_workspace_stores) > MAX_WORKSPACE_STORES:
+            _workspace_stores.popitem(last=False)
+        if changed or cached is None:
+            active_store.build_in_background()
+        log.info(
+            "Loaded client workspace knowledge workspace_id=%d status=%s chars=%d",
+            workspace_id,
+            content_data.get("knowledge_status", "unknown"),
+            len(content),
+        )
+        return active_store
+
+
 # ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        log.info(fmt, *args)
+        if self.path.partition("?")[0] not in ("/health", "/ready"):
+            log.info(fmt, *args)
 
     def _send_json(self, status: int, obj: dict):
         body = json.dumps(obj).encode()
@@ -342,14 +458,21 @@ class Handler(BaseHTTPRequestHandler):
                 text       = str(body.get("text", "")).strip()
                 top_k      = int(body.get("top_k", RAG_TOP_K))
                 tenant_id  = body.get("tenant_id")
+                workspace_id = body.get("workspace_id")
                 if not text:
                     self._send_json(400, {"error": "text required"})
                     return
-                active_store = get_tenant_store(int(tenant_id)) if tenant_id else store
+                if workspace_id:
+                    active_store = get_workspace_store(int(workspace_id))
+                else:
+                    active_store = get_tenant_store(int(tenant_id)) if tenant_id else store
                 t0 = time.monotonic()
                 context = active_store.query(text, top_k)
                 duration_ms = round((time.monotonic() - t0) * 1000)
-                log.info("query tenant=%s top_k=%d → %d chars %dms", tenant_id, top_k, len(context), duration_ms)
+                log.info(
+                    "query tenant=%s workspace=%s top_k=%d → %d chars %dms",
+                    tenant_id, workspace_id, top_k, len(context), duration_ms
+                )
                 self._send_json(200, {"context": context, "duration_ms": duration_ms})
             except Exception as e:
                 log.exception("query error: %s", e)
@@ -411,10 +534,14 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/rebuild":
             body = self._read_json() if self.headers.get("Content-Length", "0") != "0" else {}
             tenant_id = body.get("tenant_id")
-            target = get_tenant_store(int(tenant_id)) if tenant_id else store
+            workspace_id = body.get("workspace_id")
+            if workspace_id:
+                target = get_workspace_store(int(workspace_id))
+            else:
+                target = get_tenant_store(int(tenant_id)) if tenant_id else store
             started = target.build_in_background()
             if started:
-                self._send_json(202, {"status": "building", "tenant_id": tenant_id})
+                self._send_json(202, {"status": "building", "tenant_id": tenant_id, "workspace_id": workspace_id})
             else:
                 self._send_json(200, {"status": "already_building"})
 

@@ -1,19 +1,30 @@
 #!/bin/bash
 set -e
 
-VARS_XML=/usr/local/freeswitch/conf/vars.xml
-ESL_CONF=/usr/local/freeswitch/conf/autoload_configs/event_socket.conf.xml
-XML_CURL_CONF=/usr/local/freeswitch/conf/autoload_configs/xml_curl.conf.xml
-XML_CDR_CONF=/usr/local/freeswitch/conf/autoload_configs/xml_cdr.conf.xml
+FS_CONF_DIR=/usr/local/freeswitch/etc/freeswitch
+VARS_XML=${FS_CONF_DIR}/vars.xml
+ESL_CONF=${FS_CONF_DIR}/autoload_configs/event_socket.conf.xml
+XML_CURL_CONF=${FS_CONF_DIR}/autoload_configs/xml_curl.conf.xml
+XML_CDR_CONF=${FS_CONF_DIR}/autoload_configs/xml_cdr.conf.xml
+SWITCH_CONF=${FS_CONF_DIR}/autoload_configs/switch.conf.xml
 
-# Inject external SIP/RTP IP
+# Inject NAT-advertised SIP/RTP addresses.
 if [ -n "$FS_EXT_SIP_IP" ] && [ -f "$VARS_XML" ]; then
-  sed -i 's|data="ext-sip-ip=[^"]*"|data="ext-sip-ip='"${FS_EXT_SIP_IP}"'"|' "$VARS_XML"
-  sed -i 's|data="ext-rtp-ip=[^"]*"|data="ext-rtp-ip='"${FS_EXT_SIP_IP}"'"|' "$VARS_XML"
+  sed -i "s|data=\"external_sip_ip=[^\"]*\"|data=\"external_sip_ip=${FS_EXT_SIP_IP}\"|" "$VARS_XML"
 fi
 
-if [ -n "$FS_EXT_RTP_IP" ] && [ -f "$VARS_XML" ]; then
-  sed -i 's|data="ext-rtp-ip=[^"]*"|data="ext-rtp-ip='"${FS_EXT_RTP_IP}"'"|' "$VARS_XML"
+RTP_IP=${FS_EXT_RTP_IP:-$FS_EXT_SIP_IP}
+if [ -n "$RTP_IP" ] && [ -f "$VARS_XML" ]; then
+  sed -i "s|data=\"external_rtp_ip=[^\"]*\"|data=\"external_rtp_ip=${RTP_IP}\"|" "$VARS_XML"
+fi
+
+if [ -n "$FS_DEFAULT_PASSWORD" ] && [ -f "$VARS_XML" ]; then
+  sed -i "s|data=\"default_password=[^\"]*\"|data=\"default_password=${FS_DEFAULT_PASSWORD}\"|" "$VARS_XML"
+fi
+
+if [ -n "$FS_RTP_START_PORT" ] && [ -n "$FS_RTP_END_PORT" ] && [ -f "$SWITCH_CONF" ]; then
+  sed -i "/<\\/settings>/i\\    <param name=\"rtp-start-port\" value=\"${FS_RTP_START_PORT}\"/>" "$SWITCH_CONF"
+  sed -i "/<\\/settings>/i\\    <param name=\"rtp-end-port\" value=\"${FS_RTP_END_PORT}\"/>" "$SWITCH_CONF"
 fi
 
 # Write event_socket.conf.xml — allow pod network in addition to loopback

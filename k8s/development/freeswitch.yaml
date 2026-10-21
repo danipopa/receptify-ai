@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: freeswitch
+spec:
+  replicas: 1
+  serviceName: freeswitch-headless
+  selector:
+    matchLabels:
+      app: freeswitch
+  template:
+    metadata:
+      labels:
+        app: freeswitch
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/hostname: k8s-w2
+      containers:
+        - name: freeswitch
+          image: ghcr.io/danipopa/freeswitch:latest
+          args: ["-nonat", "-nf"]
+          env:
+            - name: FS_EXT_SIP_IP
+              value: "10.0.0.250"
+            - name: FS_EXT_RTP_IP
+              value: "10.0.0.250"
+            - name: FS_DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-dev-telephony
+                  key: FS_DEFAULT_PASSWORD
+            - name: FS_RTP_START_PORT
+              value: "20000"
+            - name: FS_RTP_END_PORT
+              value: "20100"
+            - name: FS_ESL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: receptify-dev-telephony
+                  key: FS_ESL_PASSWORD
+            - name: API_URL
+              value: "http://receptify-api"
+          ports:
+            - name: sip-udp
+              containerPort: 5060
+              protocol: UDP
+            - name: sip-tcp
+              containerPort: 5060
+              protocol: TCP
+            - name: sip-ext-udp
+              containerPort: 5080
+              protocol: UDP
+            - name: sip-ext-tcp
+              containerPort: 5080
+              protocol: TCP
+            - name: esl
+              containerPort: 8021
+              protocol: TCP
+          volumeMounts:
+            - name: fs-bridge-wav
+              mountPath: /tmp/fs-bridge-wav
+          livenessProbe:
+            tcpSocket:
+              port: 5060
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: 5060
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+      volumes:
+        - name: fs-bridge-wav
+          hostPath:
+            path: /home/storage/ns/receptify-dev/fs-bridge-wav
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: freeswitch-headless
+spec:
+  clusterIP: None
+  selector:
+    app: freeswitch
+  ports:
+    - name: esl
+      port: 8021
+      targetPort: 8021
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: freeswitch
+spec:
+  selector:
+    app: freeswitch
+  ports:
+    - name: esl
+      port: 8021
+      targetPort: 8021
+      protocol: TCP

@@ -46,8 +46,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 FS_HOST     = os.getenv("FS_HOST",     "127.0.0.1")
 FS_PORT     = int(os.getenv("FS_PORT", "8021"))
-FS_PASSWORD = os.getenv("FS_PASSWORD", "R3c3pt1fy#ESL@xP9kZm2X")
-HOST        = os.getenv("HOST",        "0.0.0.0")
+FS_PASSWORD  = os.getenv("FS_PASSWORD")
+if not FS_PASSWORD:
+    raise RuntimeError("FS_PASSWORD must be set")
+HOST         = os.getenv("HOST",         "0.0.0.0")
 PORT        = int(os.getenv("PORT",    "9094"))
 WAV_DIR     = os.getenv("WAV_DIR",     "/tmp/fs-bridge-wav")
 LOG_LEVEL      = os.getenv("LOG_LEVEL",      "INFO").upper()
@@ -304,7 +306,8 @@ def stop_playback(call_uuid: str) -> str:
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        log.info(fmt, *args)
+        if self.path.partition("?")[0] not in ("/health", "/ready"):
+            log.info(fmt, *args)
 
     def _send_json(self, status: int, obj: dict):
         body = json.dumps(obj).encode()

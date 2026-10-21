@@ -81,7 +81,6 @@ services:
     ports:
       - "9093:9093"
     environment:
-      PIPER_BIN:          /piper/piper
       PIPER_MODEL:        /piper/en_US-lessac-medium.onnx
       OUTPUT_SAMPLE_RATE: "8000"
       LOG_LEVEL:          INFO

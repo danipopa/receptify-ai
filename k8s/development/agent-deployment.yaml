@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+spec:
+  template:
+    spec:
+      containers:
+        - name: agent
+          env:
+            - name: AUDIO_PLAYBACK_MODE
+              value: fs_bridge
+            - name: BARGE_IN_ENABLED
+              value: "false"
+            - name: BARGE_IN_MS
+              value: "400"
+            - name: BARGE_IN_RMS_THRESHOLD
+              value: "0.015"
+            - name: SILENCE_MS
+              value: "450"
+            - name: MIN_SPEECH_SEC
+              value: "0.35"

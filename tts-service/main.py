@@ -7,13 +7,11 @@ GET  /health
 GET  /ready
 
 Environment variables:
-  PIPER_BIN          /usr/local/bin/piper
-  PIPER_MODEL        /opt/piper/en_US-lessac-medium.onnx
-  OUTPUT_SAMPLE_RATE 8000
-  PIPER_TIMEOUT      10
-  TTS_MAX_WORKERS    1
-  TTS_CACHE_ITEMS    64
-  HOST               0.0.0.0
+PIPER_MODEL        /opt/piper/en_US-lessac-medium.onnx
+OUTPUT_SAMPLE_RATE 8000
+TTS_MAX_WORKERS    1
+TTS_CACHE_ITEMS    64
+HOST               0.0.0.0
   PORT               9093
   LOG_LEVEL          INFO
 """
@@ -27,20 +25,20 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
 import wave
 from concurrent.futures import ThreadPoolExecutor
 
 from aiohttp import web
+from piper import PiperVoice
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-PIPER_BIN          = os.getenv("PIPER_BIN",    "/usr/local/bin/piper")
 PIPER_MODEL        = os.getenv("PIPER_MODEL",  "/opt/piper/en_US-lessac-medium.onnx")
 OUTPUT_SAMPLE_RATE = int(os.getenv("OUTPUT_SAMPLE_RATE", "8000"))
-PIPER_TIMEOUT      = int(os.getenv("PIPER_TIMEOUT", "10"))
 TTS_MAX_WORKERS    = int(os.getenv("TTS_MAX_WORKERS", "1"))
 TTS_CACHE_ITEMS    = int(os.getenv("TTS_CACHE_ITEMS", "64"))
 HOST               = os.getenv("HOST", "0.0.0.0")
@@ -68,7 +66,12 @@ logging.root.setLevel(LOG_LEVEL)
 logging.root.handlers = [_h]
 log = logging.getLogger("tts")
 
+log.info("Loading Piper voice model=%s", PIPER_MODEL)
+voice = PiperVoice.load(PIPER_MODEL)
+log.info("Piper voice ready")
+
 executor = ThreadPoolExecutor(max_workers=TTS_MAX_WORKERS)
+voice_lock = threading.Lock()
 tts_cache: collections.OrderedDict[tuple[str, int], bytes] = collections.OrderedDict()
 
 # ---------------------------------------------------------------------------
@@ -95,21 +98,9 @@ def _synthesize(text: str, out_rate: int) -> bytes:
         raw_wav = os.path.join(tmp, "raw.wav")
         out_wav = os.path.join(tmp, "out.wav")
 
-        try:
-            result = subprocess.run(
-                [PIPER_BIN, "--model", PIPER_MODEL, "--output_file", raw_wav],
-                input=text,
-                text=True,
-                timeout=PIPER_TIMEOUT,
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-        except subprocess.TimeoutExpired:
-            subprocess.run(["pkill", "-9", "-f", "piper"], check=False)
-            raise RuntimeError("Piper timeout")
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Piper failed (stderr): {e.stderr.strip()}")
+        with voice_lock:
+            with wave.open(raw_wav, "wb") as wav_file:
+                voice.synthesize_wav(text, wav_file)
 
         if not os.path.exists(raw_wav) or os.path.getsize(raw_wav) == 0:
             raise RuntimeError("Piper produced no output")

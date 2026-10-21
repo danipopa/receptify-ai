@@ -1,0 +1,145 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: receptify-dev
+
+resources:
+  - namespace.yaml
+  - postgres-pv.yaml
+  - ollama-pv.yaml
+  - ../agent.yaml
+  - ../ollama.yaml
+  - ../postgres.yaml
+  - ../rag-service.yaml
+  - ../receptify-api.yaml
+  - ../receptify-frontend.yaml
+  - ../stt-service.yaml
+  - ../tts-service.yaml
+  - freeswitch.yaml
+  - fs-bridge.yaml
+
+configMapGenerator:
+  - name: receptify-external-services
+    literals:
+      - RAG_URL=http://rag-service:9091
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+images:
+  - name: ghcr.io/danipopa/agent
+    newName: 192.168.100.16:30501/receptify-dev/agent
+    newTag: dev-20261018-barge-in-off-r1
+  - name: ghcr.io/danipopa/rag-service
+    newName: 192.168.100.16:30501/receptify-dev/rag-service
+    newTag: dev-20261018-keyword-rag-r3
+  - name: ghcr.io/danipopa/receptify-api
+    newName: 192.168.100.16:30501/receptify-dev/receptify-api
+    newTag: dev-20261018-mock-number-routing-r2
+  - name: ghcr.io/danipopa/receptify-frontend
+    newName: 192.168.100.16:30501/receptify-dev/receptify-frontend
+    newTag: dev-20261018-mock-number-routing
+  - name: ghcr.io/danipopa/stt-service
+    newName: 192.168.100.16:30501/receptify-dev/stt-service
+    newTag: dev-20261018-stt-cpu-tuning-r1
+  - name: ghcr.io/danipopa/tts-service
+    newName: 192.168.100.16:30501/receptify-dev/tts-service
+    newTag: dev-20261017-fast
+  - name: ghcr.io/danipopa/freeswitch
+    newName: 192.168.100.16:30501/receptify-dev/freeswitch
+    newTag: dev-20261018-telephony
+  - name: ghcr.io/danipopa/fs-bridge
+    newName: 192.168.100.16:30501/receptify-dev/fs-bridge
+    newTag: dev-20261017-telephony
+
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      labelSelector: app in (agent,rag-service,receptify-api,receptify-frontend,stt-service,tts-service)
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/imagePullSecrets
+  - path: api-deployment.yaml
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: receptify-api
+  - path: agent-deployment.yaml
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: agent
+  - path: api-service.yaml
+    target:
+      version: v1
+      kind: Service
+      name: receptify-api
+  - path: frontend-deployment.yaml
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: receptify-frontend
+  - path: frontend-service.yaml
+    target:
+      version: v1
+      kind: Service
+      name: receptify-frontend
+  - path: rag-deployment.yaml
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: rag-service
+  - path: postgres-deployment.yaml
+    target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: postgres
+  - path: delete-postgres-pv.yaml
+    target:
+      version: v1
+      kind: PersistentVolume
+      name: postgres-pv
+  - path: postgres-pvc.yaml
+    target:
+      version: v1
+      kind: PersistentVolumeClaim
+      name: postgres-pvc
+  - path: ollama-deployment.yaml
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: ollama
+  - path: delete-ollama-pv.yaml
+    target:
+      version: v1
+      kind: PersistentVolume
+      name: ollama-pv
+  - path: ollama-pvc.yaml
+    target:
+      version: v1
+      kind: PersistentVolumeClaim
+      name: ollama-pvc
+  - path: delete-ingress.yaml
+    target:
+      group: networking.k8s.io
+      version: v1
+      kind: Ingress
+      name: receptify-ingress
+  - path: delete-rag-pv.yaml
+    target:
+      version: v1
+      kind: PersistentVolume
+      name: rag-pv
+  - path: delete-rag-pvc.yaml
+    target:
+      version: v1
+      kind: PersistentVolumeClaim
+      name: rag-pvc

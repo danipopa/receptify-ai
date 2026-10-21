@@ -7,6 +7,7 @@ interface Tenant {
   email: string
   plan: string
   status: string
+  platform_admin: boolean
 }
 
 interface AuthState {

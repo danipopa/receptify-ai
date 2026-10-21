@@ -24,8 +24,6 @@ spec:
           ports:
             - containerPort: 9093
           env:
-            - name: PIPER_BIN
-              value: /usr/local/bin/piper
             - name: PIPER_MODEL
               value: /opt/piper/en_US-lessac-medium.onnx
             - name: OUTPUT_SAMPLE_RATE

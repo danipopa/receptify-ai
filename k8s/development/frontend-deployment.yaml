@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: receptify-frontend
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: receptify-frontend
+          env:
+            - name: NUXT_PUBLIC_API_BASE
+              value: http://10.0.0.250:30083/api/v1

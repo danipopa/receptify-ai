@@ -6,7 +6,6 @@ COPY main.py .
 
 ENV FS_HOST=127.0.0.1 \
     FS_PORT=8021 \
-    FS_PASSWORD=R3c3pt1fy#ESL@xP9kZm2X \
     HOST=0.0.0.0 \
     PORT=9094 \
     WAV_DIR=/tmp/fs-bridge-wav \

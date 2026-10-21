@@ -13,6 +13,7 @@
           <tr>
             <th>Number</th>
             <th>Provider</th>
+            <th>Client workspace</th>
             <th>Gateway</th>
             <th>Status</th>
             <th>Added</th>
@@ -23,6 +24,7 @@
           <tr v-for="did in dids" :key="did.id">
             <td>{{ did.number }}</td>
             <td>{{ did.provider }}</td>
+            <td>{{ workspaceName(did.client_workspace_id) }}</td>
             <td>
               <span :class="['badge', gatewayBadgeClass(did.gateway_type)]">{{ did.gateway_type || 'none' }}</span>
             </td>
@@ -49,6 +51,15 @@
             <input v-model="form.number" class="form-control" placeholder="+15551234567" :disabled="!!editing" required />
           </div>
           <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Client workspace</label>
+              <select v-model="form.client_workspace_id" class="form-control">
+                <option value="">Not assigned</option>
+                <option v-for="workspace in workspaces" :key="workspace.id" :value="String(workspace.id)">
+                  {{ workspace.name }}
+                </option>
+              </select>
+            </div>
             <div class="form-group">
               <label class="form-label">Provider</label>
               <select v-model="form.provider" class="form-control">
@@ -127,19 +138,22 @@ const api = useApi()
 
 const loading     = ref(true)
 const dids        = ref<any[]>([])
+const workspaces  = ref<any[]>([])
 const showModal   = ref(false)
 const editing     = ref<any>(null)
 const formError   = ref("")
 const formLoading = ref(false)
 
 const defaultForm = () => ({
-  number: "", provider: "twilio", status: "active",
+  number: "", client_workspace_id: "", provider: "twilio", status: "active",
   gateway_type: "none", gateway_host: "", gateway_port: 5060,
   gateway_user: "", gateway_password: "", gateway_realm: "",
 })
 const form = reactive(defaultForm())
 
-onMounted(fetchDids)
+onMounted(async () => {
+  await Promise.all([fetchDids(), fetchWorkspaces()])
+})
 
 async function fetchDids() {
   loading.value = true
@@ -149,6 +163,11 @@ async function fetchDids() {
   } finally {
     loading.value = false
   }
+}
+
+async function fetchWorkspaces() {
+  const res = await api.get<{ client_workspaces: any[] }>("/client_workspaces")
+  workspaces.value = res.client_workspaces
 }
 
 function openAdd() {
@@ -161,6 +180,7 @@ function openEdit(did: any) {
   editing.value = did
   Object.assign(form, {
     number:           did.number,
+    client_workspace_id: did.client_workspace_id ? String(did.client_workspace_id) : "",
     provider:         did.provider,
     status:           did.status,
     gateway_type:     did.gateway_type || "none",
@@ -181,6 +201,7 @@ function closeModal() {
 
 function buildPayload() {
   const p: any = {
+    client_workspace_id: form.client_workspace_id || null,
     provider: form.provider,
     status: form.status,
     gateway_type: form.gateway_type,
@@ -233,6 +254,10 @@ function gatewayBadgeClass(type: string) {
   if (type === "sip_trunk")        return "badge-info"
   return "badge-neutral"
 }
+
+function workspaceName(id: number | null) {
+  return workspaces.value.find((workspace) => workspace.id === id)?.name || "—"
+}
 </script>
 
 <style scoped>
@@ -254,4 +279,3 @@ function gatewayBadgeClass(type: string) {
 .badge-info    { background: #06b6d420; color: #0891b2; }
 .badge-neutral { background: var(--color-surface-2, #f1f5f9); color: var(--color-text-muted); }
 </style>
-

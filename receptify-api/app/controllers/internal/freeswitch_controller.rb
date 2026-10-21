@@ -49,21 +49,25 @@ module Internal
       did  = Did.find_by(number: "+#{dest}") ||
              Did.find_by(number: dest) ||
              Did.find_by(gateway_user: dest)
+      mock_number = MockNumberRequest.find_by(number: "+#{dest}") unless did
 
-      unless did&.status == "active"
+      if did
+        return render_not_found unless did.status == "active"
+      elsif !mock_number&.simulated?
         return render_not_found
       end
 
-      number = did.number
+      number = did&.number || mock_number.number
+      extension_name = did&.fs_gateway_name || "mock-#{dest}"
 
       xml = <<~XML
         <?xml version="1.0" encoding="UTF-8" standalone="no"?>
         <document type="freeswitch/xml">
           <section name="dialplan">
             <context name="public">
-              <extension name="inbound-#{did.fs_gateway_name}">
+              <extension name="inbound-#{extension_name}">
                 <condition field="destination_number" expression="^\\+?#{dest}$">
-                  <action application="set" data="call_did=#{number}"/>
+                  <action application="set" data="call_did=#{number.gsub(/\D/, '')}"/>
                   <action application="answer"/>
                   <action application="park"/>
                 </condition>
@@ -82,26 +86,38 @@ module Internal
       username = params[:user] || params[:key_value]
       domain   = params[:domain] || FS_DOMAIN
 
-      did = Did.where(gateway_type: "sip_registration")
-               .where(gateway_user: username)
-               .first
+      linphone_user = ENV["FS_LINPHONE_USER"]
+      if username == linphone_user && ENV["FS_LINPHONE_PASSWORD"].present?
+        password = ENV.fetch("FS_LINPHONE_PASSWORD")
+        call_did = ENV.fetch("FS_LINPHONE_DID", "+1000")
+      else
+        did = Did.where(gateway_type: "sip_registration")
+                 .where(gateway_user: username)
+                 .first
+        return render_not_found unless did
 
-      unless did
-        return render_not_found
+        username = did.gateway_user
+        password = did.gateway_password
+        call_did = did.number
       end
+
+      username = ERB::Util.html_escape(username)
+      domain   = ERB::Util.html_escape(domain)
+      password = ERB::Util.html_escape(password)
+      call_did = ERB::Util.html_escape(call_did)
 
       xml = <<~XML
         <?xml version="1.0" encoding="UTF-8" standalone="no"?>
         <document type="freeswitch/xml">
           <section name="directory">
             <domain name="#{domain}">
-              <user id="#{did.gateway_user}">
+              <user id="#{username}">
                 <params>
-                  <param name="password" value="#{did.gateway_password}"/>
+                  <param name="password" value="#{password}"/>
                 </params>
                 <variables>
                   <variable name="user_context" value="public"/>
-                  <variable name="call_did" value="#{did.number}"/>
+                  <variable name="call_did" value="#{call_did}"/>
                 </variables>
               </user>
             </domain>
@@ -121,6 +137,10 @@ module Internal
       end
 
       ext_ip  = ENV.fetch("FS_EXT_SIP_IP", "auto-nat")
+      internal_auth_calls = ENV.fetch("FS_AUTH_CALLS", "false")
+      unless %w[true false].include?(internal_auth_calls)
+        raise ArgumentError, "FS_AUTH_CALLS must be true or false"
+      end
 
       gateways = Did.where(gateway_type: "sip_registration", status: "active")
 
@@ -180,7 +200,7 @@ module Internal
                     <param name="enable-timer"                    value="false"/>
                     <param name="rtp-timeout-sec"                 value="300"/>
                     <param name="rtp-hold-timeout-sec"            value="1800"/>
-                    <param name="auth-calls"                      value="false"/>
+                    <param name="auth-calls"                      value="#{internal_auth_calls}"/>
                     <param name="nonce-ttl"                       value="60"/>
                   </settings>
                 </profile>
